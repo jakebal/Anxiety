@@ -1,0 +1,39 @@
+{
+  "name": "anxiety",
+  "version": "1.0.0",
+  "description": "",
+  "main": "electron/main.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "vite build && electron .",
+    "dist:exe": "vite build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.anxiety.game",
+    "productName": "Anxiety",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "portable"
+    }
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "vite": "^8.3.8"
+  }
+}
