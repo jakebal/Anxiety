@@ -5,10 +5,10 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 
-const TILE_SIZE = 2.5;
+const TILE_SIZE = 2.125;
 const GROUND_TILES = 40;
 const GROUND_SIZE = TILE_SIZE * GROUND_TILES;
-const CEILING_TILE_SIZE = 0.625;
+const CEILING_TILE_SIZE = 0.53125;
 const CEILING_TILES = GROUND_SIZE / CEILING_TILE_SIZE;
 
 const MAN_WIDTH = 1.35;
@@ -19,7 +19,7 @@ const MAX_IDLE_MEN = 200;
 const MAX_ENCOUNTER_MEN = 4;
 
 const EYE_HEIGHT = 1.65;
-const CELL_SIZE = 4.2;
+const CELL_SIZE = 3.57;
 const WALL_HEIGHT = 3.6;
 const WALL_THICKNESS = 0.45;
 const WALL_VIEW_RADIUS = 8;
@@ -59,6 +59,14 @@ function createChunkRng(cx, cz) {
   };
 }
 
+const CUBICLE_SIDE_NORTH = 1; // -Z
+const CUBICLE_SIDE_WEST = 2;  // -X
+const CUBICLE_SIDE_SOUTH = 4; // +Z
+const CUBICLE_SIDE_EAST = 8;  // +X
+
+// cubical-test.glb has open sides on South (+Z) and East (+X), and dividers on North (-Z) and West (-X)
+const CUBICLE_DEFAULT_OPEN_SIDES = CUBICLE_SIDE_SOUTH | CUBICLE_SIDE_EAST;
+
 function isCubicleChunk(cx, cz) {
   if (cx === 0 && cz === 0) return false;
   if (cx === 1 && cz === 0) return true;
@@ -72,6 +80,11 @@ function isCubicleCell(gx, gz) {
   const lx = ((gx % MAZE_CHUNK_SIZE) + MAZE_CHUNK_SIZE) % MAZE_CHUNK_SIZE;
   const lz = ((gz % MAZE_CHUNK_SIZE) + MAZE_CHUNK_SIZE) % MAZE_CHUNK_SIZE;
   return (lx === 1 || lx === 2 || lx === 4 || lx === 5) && (lz === 1 || lz === 3 || lz === 5);
+}
+
+function getCubicleOpenSides(gx, gz) {
+  if (!isCubicleCell(gx, gz)) return 0;
+  return CUBICLE_DEFAULT_OPEN_SIDES;
 }
 
 function getMazeChunk(cx, cz) {
@@ -160,13 +173,35 @@ function hasVWall(gx, gz) {
   return (getMazeCellBits(gx, gz) & 2) !== 0;
 }
 
+function stepSideBit(dx, dz) {
+  if (dz === -1) return CUBICLE_SIDE_NORTH;
+  if (dx === -1) return CUBICLE_SIDE_WEST;
+  if (dz === 1) return CUBICLE_SIDE_SOUTH;
+  if (dx === 1) return CUBICLE_SIDE_EAST;
+  return 0;
+}
+
 function canStep(gx, gz, dx, dz) {
-  if (isCubicleCell(gx + dx, gz + dz)) return false;
-  if (dz === -1) return !hasHWall(gx, gz);
-  if (dz === 1) return !hasHWall(gx, gz + 1);
-  if (dx === -1) return !hasVWall(gx, gz);
-  if (dx === 1) return !hasVWall(gx + 1, gz);
-  return false;
+  const exitBit = stepSideBit(dx, dz);
+  if (!exitBit) return false;
+
+  if (dz === -1 && hasHWall(gx, gz)) return false;
+  if (dz === 1 && hasHWall(gx, gz + 1)) return false;
+  if (dx === -1 && hasVWall(gx, gz)) return false;
+  if (dx === 1 && hasVWall(gx + 1, gz)) return false;
+
+  if (isCubicleCell(gx, gz) && (getCubicleOpenSides(gx, gz) & exitBit) === 0) {
+    return false;
+  }
+
+  const nx = gx + dx;
+  const nz = gz + dz;
+  const entryBit = stepSideBit(-dx, -dz);
+  if (isCubicleCell(nx, nz) && (getCubicleOpenSides(nx, nz) & entryBit) === 0) {
+    return false;
+  }
+
+  return true;
 }
 
 const PHRASES = [
@@ -1719,7 +1754,7 @@ async function init() {
     box.getCenter(center);
 
     const maxHoriz = Math.max(size.x, size.z);
-    const scale = maxHoriz > 0 ? (CELL_SIZE * 0.96) / maxHoriz : 1;
+    const scale = maxHoriz > 0 ? 4.032 / maxHoriz : 1;
     template.scale.setScalar(scale);
 
     const wrapper = new THREE.Group();
@@ -2259,11 +2294,11 @@ async function init() {
     for (let iter = 0; iter < 64; iter++) {
       if (gx === tx && gz === tz) return true;
       if (tMaxX < tMaxZ) {
-        if (stepX > 0 ? hasVWall(gx + 1, gz) : hasVWall(gx, gz)) return false;
+        if (!canStep(gx, gz, stepX, 0)) return false;
         gx += stepX;
         tMaxX += tDeltaX;
       } else {
-        if (stepZ > 0 ? hasHWall(gx, gz + 1) : hasHWall(gx, gz)) return false;
+        if (!canStep(gx, gz, 0, stepZ)) return false;
         gz += stepZ;
         tMaxZ += tDeltaZ;
       }
