@@ -59,6 +59,21 @@ function createChunkRng(cx, cz) {
   };
 }
 
+function isCubicleChunk(cx, cz) {
+  if (cx === 0 && cz === 0) return false;
+  if (cx === 1 && cz === 0) return true;
+  return hash2D(cx, cz, (worldSeed + 4099) | 0) < 0.22;
+}
+
+function isCubicleCell(gx, gz) {
+  const cx = Math.floor(gx / MAZE_CHUNK_SIZE);
+  const cz = Math.floor(gz / MAZE_CHUNK_SIZE);
+  if (!isCubicleChunk(cx, cz)) return false;
+  const lx = ((gx % MAZE_CHUNK_SIZE) + MAZE_CHUNK_SIZE) % MAZE_CHUNK_SIZE;
+  const lz = ((gz % MAZE_CHUNK_SIZE) + MAZE_CHUNK_SIZE) % MAZE_CHUNK_SIZE;
+  return (lx === 1 || lx === 3 || lx === 5) && (lz === 1 || lz === 3 || lz === 5);
+}
+
 function getMazeChunk(cx, cz) {
   const key = `${cx},${cz}`;
   let data = mazeChunks.get(key);
@@ -116,6 +131,15 @@ function getMazeChunk(cx, cz) {
     data[N] &= ~1;
   }
 
+  if (isCubicleChunk(cx, cz)) {
+    for (let z = 0; z < N; z++) {
+      for (let x = 0; x < N; x++) {
+        if (z > 0) data[z * N + x] &= ~1;
+        if (x > 0) data[z * N + x] &= ~2;
+      }
+    }
+  }
+
   mazeChunks.set(key, data);
   return data;
 }
@@ -137,6 +161,7 @@ function hasVWall(gx, gz) {
 }
 
 function canStep(gx, gz, dx, dz) {
+  if (isCubicleCell(gx + dx, gz + dz)) return false;
   if (dz === -1) return !hasHWall(gx, gz);
   if (dz === 1) return !hasHWall(gx, gz + 1);
   if (dx === -1) return !hasVWall(gx, gz);
@@ -1108,6 +1133,7 @@ async function init() {
 
   function hasIdleManSpawn(gx, gz) {
     if (gx === 0 && gz === 0) return false;
+    if (isCubicleCell(gx, gz)) return false;
     return hash2D(gx, gz, (worldSeed + 77) | 0) < 0.16;
   }
 
@@ -1638,6 +1664,75 @@ async function init() {
     }
   });
 
+  const MAX_CUBICLE_INSTANCES = 80;
+  const cubiclePool = [];
+  const cubicleDividerTexture = textureLoader.load('/water-cooler.png');
+  cubicleDividerTexture.colorSpace = THREE.SRGBColorSpace;
+  cubicleDividerTexture.flipY = false;
+  const cubicleComputerTexture = textureLoader.load('/computer.png');
+  cubicleComputerTexture.colorSpace = THREE.SRGBColorSpace;
+  cubicleComputerTexture.flipY = false;
+  const cubicleCabinetTexture = textureLoader.load('/filing-cabinet.png');
+  cubicleCabinetTexture.colorSpace = THREE.SRGBColorSpace;
+  cubicleCabinetTexture.flipY = false;
+
+  const cubicleDividerMat = new THREE.MeshStandardMaterial({
+    map: cubicleDividerTexture,
+    roughness: 0.7,
+    metalness: 0.05,
+    side: THREE.DoubleSide,
+  });
+  const cubicleComputerMat = new THREE.MeshStandardMaterial({
+    map: cubicleComputerTexture,
+    roughness: 0.55,
+    metalness: 0.1,
+    side: THREE.DoubleSide,
+  });
+  const cubicleCabinetMat = new THREE.MeshStandardMaterial({
+    map: cubicleCabinetTexture,
+    roughness: 0.55,
+    metalness: 0.2,
+    side: THREE.DoubleSide,
+  });
+
+  gltfLoader.load('/cubical.glb', (gltf) => {
+    const template = gltf.scene;
+    template.traverse((child) => {
+      if (child.isMesh) {
+        const matName = child.material?.name || '';
+        if (matName.startsWith('Computer')) {
+          child.material = cubicleComputerMat;
+        } else if (matName.startsWith('Cabinet')) {
+          child.material = cubicleCabinetMat;
+        } else {
+          child.material = cubicleDividerMat;
+        }
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    const box = new THREE.Box3().setFromObject(template);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    const targetHeight = 1.48;
+    const scale = size.y > 0 ? targetHeight / size.y : 1;
+    template.scale.setScalar(scale);
+
+    // Keep x=0, z=0 at the bottom corner where the divider walls meet at a right angle.
+    const wrapper = new THREE.Group();
+    template.position.set(0, -box.min.y * scale, 0);
+    wrapper.add(template);
+
+    for (let i = 0; i < MAX_CUBICLE_INSTANCES; i++) {
+      const clone = wrapper.clone();
+      clone.visible = false;
+      scene.add(clone);
+      cubiclePool.push(clone);
+    }
+  });
+
   const DIR_VECTORS = [
     [0, -1], // 0: North (-Z)
     [-1, 0], // 1: West (-X)
@@ -1758,7 +1853,7 @@ async function init() {
   }
 
   function triggerDeath(message) {
-    if (isDead) return;
+    if (isDead || devState.god) return;
     isDead = true;
     deathTime = performance.now();
     anxietyHud.style.transform = '';
@@ -1800,7 +1895,7 @@ async function init() {
   }
 
   function addAnxiety(amount) {
-    if (isDead) return;
+    if (isDead || devState.god) return;
     const next = Math.min(100, anxiety + amount);
     if (next !== anxiety) {
       anxiety = next;
@@ -2402,7 +2497,134 @@ async function init() {
     chosen.mat.needsUpdate = true;
   }
 
+  const devState = {
+    open: false,
+    noclip: false,
+    god: false,
+  };
+
+  const devMenu = document.createElement('div');
+  devMenu.style.cssText = [
+    'position:fixed',
+    'top:20px',
+    'right:24px',
+    'width:280px',
+    'padding:10px 12px',
+    'background:rgba(10,10,12,0.86)',
+    'border:1px solid rgba(255,255,255,0.28)',
+    'color:#e0e0e0',
+    'font-family:monospace',
+    'font-size:13px',
+    'z-index:50',
+    'display:none',
+    'flex-direction:column',
+    'gap:6px',
+  ].join(';');
+
+  const devStatus = document.createElement('div');
+  devStatus.style.cssText = 'color:#90caf9;font-size:12px;';
+  const devOutput = document.createElement('div');
+  devOutput.style.cssText = 'color:#b0bec5;font-size:12px;min-height:16px;';
+  const devInputRow = document.createElement('div');
+  devInputRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+  const devPrompt = document.createElement('span');
+  devPrompt.textContent = '>';
+  devPrompt.style.color = '#80deea';
+  const devInput = document.createElement('input');
+  devInput.type = 'text';
+  devInput.placeholder = 'noclip [on|off], god [on|off]';
+  devInput.style.cssText = [
+    'flex:1',
+    'background:transparent',
+    'border:none',
+    'border-bottom:1px solid rgba(255,255,255,0.25)',
+    'outline:none',
+    'color:#ffffff',
+    'font-family:monospace',
+    'font-size:13px',
+    'padding:2px 0',
+  ].join(';');
+
+  devInputRow.appendChild(devPrompt);
+  devInputRow.appendChild(devInput);
+  devMenu.appendChild(devStatus);
+  devMenu.appendChild(devOutput);
+  devMenu.appendChild(devInputRow);
+  document.body.appendChild(devMenu);
+
+  function updateDevStatus() {
+    devStatus.textContent = `noclip: ${devState.noclip ? 'ON' : 'OFF'}  |  god: ${devState.god ? 'ON' : 'OFF'}`;
+  }
+  updateDevStatus();
+
+  function setDevMenuOpen(open) {
+    devState.open = open;
+    devMenu.style.display = open ? 'flex' : 'none';
+    if (open) {
+      devInput.value = '';
+      devInput.focus();
+    } else {
+      devInput.blur();
+    }
+  }
+
+  function runDevCommand(raw) {
+    const parts = raw.trim().toLowerCase().split(/\s+/);
+    const cmd = parts[0];
+    const arg = parts[1];
+    if (!cmd) return;
+
+    if (cmd === 'noclip') {
+      if (arg === 'on') devState.noclip = true;
+      else if (arg === 'off') devState.noclip = false;
+      else if (!arg) devState.noclip = !devState.noclip;
+      else {
+        devOutput.textContent = 'Usage: noclip [on|off]';
+        return;
+      }
+      updateDevStatus();
+      devOutput.textContent = `noclip ${devState.noclip ? 'ON' : 'OFF'}`;
+    } else if (cmd === 'god') {
+      if (arg === 'on') devState.god = true;
+      else if (arg === 'off') devState.god = false;
+      else if (!arg) devState.god = !devState.god;
+      else {
+        devOutput.textContent = 'Usage: god [on|off]';
+        return;
+      }
+      updateDevStatus();
+      devOutput.textContent = `god ${devState.god ? 'ON' : 'OFF'}`;
+    } else if (cmd === 'help') {
+      devOutput.textContent = 'Commands: noclip [on|off], god [on|off]';
+    } else {
+      devOutput.textContent = `Unknown command: ${cmd}`;
+    }
+  }
+
+  devInput.addEventListener('keydown', (e) => {
+    if (e.code === 'Backquote' || e.code === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      setDevMenuOpen(false);
+      return;
+    }
+    if (e.code === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      runDevCommand(devInput.value);
+      devInput.value = '';
+    }
+  });
+
   window.addEventListener('keydown', (e) => {
+    if (e.code === 'Backquote') {
+      e.preventDefault();
+      setDevMenuOpen(!devState.open);
+      return;
+    }
+    if (devState.open) {
+      return;
+    }
     ensureAudio();
 
     if (isDead) {
@@ -2438,7 +2660,7 @@ async function init() {
         const stepX = dx * sign;
         const stepZ = dz * sign;
 
-        if (sign === 1) {
+        if (sign === 1 && !devState.noclip) {
           const cellKey = `${player.gx},${player.gz}`;
           const placement = getVendingPlacement(player.gx, player.gz);
           if (placement && placement.dx === dx && placement.dz === dz) {
@@ -2521,14 +2743,14 @@ async function init() {
           }
         }
 
-        if (canStep(player.gx, player.gz, stepX, stepZ)) {
+        if (devState.noclip || canStep(player.gx, player.gz, stepX, stepZ)) {
           const nx = player.gx + stepX;
           const nz = player.gz + stepZ;
-          if (nx === boss.gx && nz === boss.gz) {
+          if (!devState.noclip && !devState.god && nx === boss.gx && nz === boss.gz) {
             triggerBossCatch();
             return;
           }
-          if (hasIdleManAt(nx, nz)) {
+          if (!devState.noclip && hasIdleManAt(nx, nz)) {
             if (sign === -1) {
               player.dir = (player.dir + 2) % 4;
               player.targetYaw += Math.PI;
@@ -2685,7 +2907,7 @@ async function init() {
   }
 
   function triggerBossCatch() {
-    if (bossCatch.active || isDead) return;
+    if (bossCatch.active || isDead || devState.god) return;
     bossCatch.active = true;
     bossCatch.timer = 0;
     bossCatch.promptShown = false;
@@ -2752,7 +2974,7 @@ async function init() {
     labelMat.uniforms.uTypePulse.value = typePulse;
     labelMat.uniforms.uTypoPulse.value = typoPulse;
 
-    if (!bossCatch.active && !isDead && !elevatorTransition.active) {
+    if (!bossCatch.active && !isDead && !elevatorTransition.active && !devState.god) {
       let pottyRate = POTTY_FILL_RATE;
       if (pottyVendingTimer > 0) {
         pottyVendingTimer = Math.max(0, pottyVendingTimer - dt);
@@ -2790,8 +3012,8 @@ async function init() {
 
     const targetX = (player.gx + 0.5) * CELL_SIZE;
     const targetZ = (player.gz + 0.5) * CELL_SIZE;
-    const moveLerp = 1 - Math.exp(-7.5 * dt);
-    const rotLerp = 1 - Math.exp(-16 * dt);
+    const moveLerp = 1 - Math.exp(-5.2 * dt);
+    const rotLerp = 1 - Math.exp(-12 * dt);
 
     player.x += (targetX - player.x) * moveLerp;
     player.z += (targetZ - player.z) * moveLerp;
@@ -3127,6 +3349,37 @@ async function init() {
       }
       for (let fl = fluorescentCount; fl < fluorescentPool.length; fl++) {
         fluorescentPool[fl].visible = false;
+      }
+    }
+
+    let cubicleCount = 0;
+    if (cubiclePool.length > 0) {
+      const CUBICLE_QUAD_SCALES = [
+        [1, 1],
+        [-1, 1],
+        [1, -1],
+        [-1, -1],
+      ];
+      for (let gx = player.gx - WALL_VIEW_RADIUS; gx <= player.gx + WALL_VIEW_RADIUS; gx++) {
+        for (let gz = player.gz - WALL_VIEW_RADIUS; gz <= player.gz + WALL_VIEW_RADIUS; gz++) {
+          if (!isCubicleCell(gx, gz)) continue;
+          const cx = (gx + 0.5) * CELL_SIZE;
+          const cz = (gz + 0.5) * CELL_SIZE;
+          for (let q = 0; q < CUBICLE_QUAD_SCALES.length; q++) {
+            if (cubicleCount >= cubiclePool.length) break;
+            const [sx, sz] = CUBICLE_QUAD_SCALES[q];
+            const cm = cubiclePool[cubicleCount++];
+            cm.position.set(cx, 0, cz);
+            cm.rotation.set(0, 0, 0);
+            cm.scale.set(sx, 1, sz);
+            cm.visible = true;
+          }
+          if (cubicleCount >= cubiclePool.length) break;
+        }
+        if (cubicleCount >= cubiclePool.length) break;
+      }
+      for (let cb = cubicleCount; cb < cubiclePool.length; cb++) {
+        cubiclePool[cb].visible = false;
       }
     }
 
