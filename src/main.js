@@ -71,7 +71,7 @@ function isCubicleCell(gx, gz) {
   if (!isCubicleChunk(cx, cz)) return false;
   const lx = ((gx % MAZE_CHUNK_SIZE) + MAZE_CHUNK_SIZE) % MAZE_CHUNK_SIZE;
   const lz = ((gz % MAZE_CHUNK_SIZE) + MAZE_CHUNK_SIZE) % MAZE_CHUNK_SIZE;
-  return (lx === 1 || lx === 3 || lx === 5) && (lz === 1 || lz === 3 || lz === 5);
+  return (lx === 1 || lx === 2 || lx === 4 || lx === 5) && (lz === 1 || lz === 3 || lz === 5);
 }
 
 function getMazeChunk(cx, cz) {
@@ -1695,7 +1695,7 @@ async function init() {
     side: THREE.DoubleSide,
   });
 
-  gltfLoader.load('/cubical.glb', (gltf) => {
+  gltfLoader.load('/cubical-test.glb', (gltf) => {
     const template = gltf.scene;
     template.traverse((child) => {
       if (child.isMesh) {
@@ -1714,15 +1714,20 @@ async function init() {
 
     const box = new THREE.Box3().setFromObject(template);
     const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
     box.getSize(size);
+    box.getCenter(center);
 
-    const targetHeight = 1.48;
-    const scale = size.y > 0 ? targetHeight / size.y : 1;
+    const maxHoriz = Math.max(size.x, size.z);
+    const scale = maxHoriz > 0 ? (CELL_SIZE * 0.96) / maxHoriz : 1;
     template.scale.setScalar(scale);
 
-    // Keep x=0, z=0 at the bottom corner where the divider walls meet at a right angle.
     const wrapper = new THREE.Group();
-    template.position.set(0, -box.min.y * scale, 0);
+    template.position.set(
+      -center.x * scale,
+      -box.min.y * scale,
+      -center.z * scale
+    );
     wrapper.add(template);
 
     for (let i = 0; i < MAX_CUBICLE_INSTANCES; i++) {
@@ -2501,7 +2506,47 @@ async function init() {
     open: false,
     noclip: false,
     god: false,
+    grid: false,
+    boss: true,
   };
+
+  const DEBUG_GRID_DIVISIONS = WALL_VIEW_RADIUS * 2 + 1;
+  const DEBUG_GRID_SIZE = DEBUG_GRID_DIVISIONS * CELL_SIZE;
+  const debugGridGroup = new THREE.Group();
+  const debugGridLines = new THREE.GridHelper(
+    DEBUG_GRID_SIZE,
+    DEBUG_GRID_DIVISIONS,
+    0x00ff88,
+    0x00ff88
+  );
+  debugGridLines.material.transparent = true;
+  debugGridLines.material.opacity = 0.55;
+  debugGridLines.position.y = 0.025;
+  debugGridGroup.add(debugGridLines);
+
+  const centerCrossVerts = [];
+  const halfCross = 0.35;
+  for (let ix = -WALL_VIEW_RADIUS; ix <= WALL_VIEW_RADIUS; ix++) {
+    for (let iz = -WALL_VIEW_RADIUS; iz <= WALL_VIEW_RADIUS; iz++) {
+      const cx = ix * CELL_SIZE;
+      const cz = iz * CELL_SIZE;
+      centerCrossVerts.push(cx - halfCross, 0.03, cz, cx + halfCross, 0.03, cz);
+      centerCrossVerts.push(cx, 0.03, cz - halfCross, cx, 0.03, cz + halfCross);
+    }
+  }
+  const centerCrossGeo = new THREE.BufferGeometry();
+  centerCrossGeo.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(centerCrossVerts, 3)
+  );
+  const centerCrossMat = new THREE.LineBasicMaterial({
+    color: 0xffff00,
+    transparent: true,
+    opacity: 0.85,
+  });
+  debugGridGroup.add(new THREE.LineSegments(centerCrossGeo, centerCrossMat));
+  debugGridGroup.visible = false;
+  scene.add(debugGridGroup);
 
   const devMenu = document.createElement('div');
   devMenu.style.cssText = [
@@ -2532,7 +2577,7 @@ async function init() {
   devPrompt.style.color = '#80deea';
   const devInput = document.createElement('input');
   devInput.type = 'text';
-  devInput.placeholder = 'noclip [on|off], god [on|off]';
+  devInput.placeholder = 'noclip, god, grid, boss [on|off]';
   devInput.style.cssText = [
     'flex:1',
     'background:transparent',
@@ -2553,7 +2598,7 @@ async function init() {
   document.body.appendChild(devMenu);
 
   function updateDevStatus() {
-    devStatus.textContent = `noclip: ${devState.noclip ? 'ON' : 'OFF'}  |  god: ${devState.god ? 'ON' : 'OFF'}`;
+    devStatus.textContent = `noclip: ${devState.noclip ? 'ON' : 'OFF'}  |  god: ${devState.god ? 'ON' : 'OFF'}  |  grid: ${devState.grid ? 'ON' : 'OFF'}  |  boss: ${devState.boss ? 'ON' : 'OFF'}`;
   }
   updateDevStatus();
 
@@ -2594,8 +2639,34 @@ async function init() {
       }
       updateDevStatus();
       devOutput.textContent = `god ${devState.god ? 'ON' : 'OFF'}`;
+    } else if (cmd === 'grid') {
+      if (arg === 'on') devState.grid = true;
+      else if (arg === 'off') devState.grid = false;
+      else if (!arg) devState.grid = !devState.grid;
+      else {
+        devOutput.textContent = 'Usage: grid [on|off]';
+        return;
+      }
+      debugGridGroup.visible = devState.grid;
+      updateDevStatus();
+      devOutput.textContent = `grid ${devState.grid ? 'ON' : 'OFF'}`;
+    } else if (cmd === 'boss') {
+      if (arg === 'on') devState.boss = true;
+      else if (arg === 'off') devState.boss = false;
+      else if (!arg) devState.boss = !devState.boss;
+      else {
+        devOutput.textContent = 'Usage: boss [on|off]';
+        return;
+      }
+      bossMesh.visible = devState.boss;
+      bossLight.visible = devState.boss;
+      if (!devState.boss && angryMumbleAudio) {
+        angryMumbleAudio.volume = 0;
+      }
+      updateDevStatus();
+      devOutput.textContent = `boss ${devState.boss ? 'ON' : 'OFF'}`;
     } else if (cmd === 'help') {
-      devOutput.textContent = 'Commands: noclip [on|off], god [on|off]';
+      devOutput.textContent = 'Commands: noclip, god, grid, boss [on|off]';
     } else {
       devOutput.textContent = `Unknown command: ${cmd}`;
     }
@@ -2746,7 +2817,7 @@ async function init() {
         if (devState.noclip || canStep(player.gx, player.gz, stepX, stepZ)) {
           const nx = player.gx + stepX;
           const nz = player.gz + stepZ;
-          if (!devState.noclip && !devState.god && nx === boss.gx && nz === boss.gz) {
+          if (!devState.noclip && !devState.god && devState.boss && nx === boss.gx && nz === boss.gz) {
             triggerBossCatch();
             return;
           }
@@ -2907,7 +2978,7 @@ async function init() {
   }
 
   function triggerBossCatch() {
-    if (bossCatch.active || isDead || devState.god) return;
+    if (bossCatch.active || isDead || devState.god || !devState.boss) return;
     bossCatch.active = true;
     bossCatch.timer = 0;
     bossCatch.promptShown = false;
@@ -2990,7 +3061,7 @@ async function init() {
 
     const anxietyNorm = anxiety / 100;
     const bossDistTiles = Math.hypot(boss.gx - player.gx, boss.gz - player.gz);
-    const bossProx = Math.max(0, 1 - bossDistTiles / 8);
+    const bossProx = devState.boss ? Math.max(0, 1 - bossDistTiles / 8) : 0;
     if (heartbeatAudio) {
       const hbNorm = Math.max(0, (anxietyNorm - 0.3) / 0.7);
       const effectiveHb = Math.min(1, Math.max(hbNorm, bossProx * 0.92));
@@ -3068,7 +3139,7 @@ async function init() {
         deathTime = performance.now();
         anxietyHud.style.transform = '';
       }
-    } else if (!elevatorTransition.active) {
+    } else if (!elevatorTransition.active && devState.boss) {
       boss.stepTimer += dt;
       if (boss.stepTimer >= boss.stepInterval) {
         boss.stepTimer -= boss.stepInterval;
@@ -3129,26 +3200,30 @@ async function init() {
     );
 
     if (angryMumbleAudio) {
-      const dx = boss.x - player.x;
-      const dz = boss.z - player.z;
-      const bossDist = Math.hypot(dx, dz);
-      const maxMumbleDist = CELL_SIZE * 4.5;
-      const mumbleProx = Math.max(0, 1 - bossDist / maxMumbleDist);
-      const lookDot =
-        bossDist > 0.001
-          ? (-Math.sin(player.yaw) * dx + -Math.cos(player.yaw) * dz) / bossDist
-          : 1;
-      const lookFactor = 0.25 + 0.75 * ((Math.max(-1, Math.min(1, lookDot)) + 1) * 0.5);
-      angryMumbleAudio.volume = Math.min(
-        0.85,
-        Math.pow(mumbleProx, 1.5) * 0.85 * lookFactor
-      );
+      if (!devState.boss) {
+        angryMumbleAudio.volume = 0;
+      } else {
+        const dx = boss.x - player.x;
+        const dz = boss.z - player.z;
+        const bossDist = Math.hypot(dx, dz);
+        const maxMumbleDist = CELL_SIZE * 4.5;
+        const mumbleProx = Math.max(0, 1 - bossDist / maxMumbleDist);
+        const lookDot =
+          bossDist > 0.001
+            ? (-Math.sin(player.yaw) * dx + -Math.cos(player.yaw) * dz) / bossDist
+            : 1;
+        const lookFactor = 0.25 + 0.75 * ((Math.max(-1, Math.min(1, lookDot)) + 1) * 0.5);
+        angryMumbleAudio.volume = Math.min(
+          0.85,
+          Math.pow(mumbleProx, 1.5) * 0.85 * lookFactor
+        );
+      }
     }
 
     if (boss.sightCooldown > 0) {
       boss.sightCooldown = Math.max(0, boss.sightCooldown - dt);
     }
-    if (boss.sightCooldown === 0 && canSeeBoss()) {
+    if (devState.boss && boss.sightCooldown === 0 && canSeeBoss()) {
       if (playDeepBass()) {
         boss.sightCooldown = 12;
       }
@@ -3352,29 +3427,25 @@ async function init() {
       }
     }
 
+    if (debugGridGroup.visible) {
+      debugGridGroup.position.set(
+        (player.gx + 0.5) * CELL_SIZE,
+        0,
+        (player.gz + 0.5) * CELL_SIZE
+      );
+    }
+
     let cubicleCount = 0;
     if (cubiclePool.length > 0) {
-      const CUBICLE_QUAD_SCALES = [
-        [1, 1],
-        [-1, 1],
-        [1, -1],
-        [-1, -1],
-      ];
       for (let gx = player.gx - WALL_VIEW_RADIUS; gx <= player.gx + WALL_VIEW_RADIUS; gx++) {
         for (let gz = player.gz - WALL_VIEW_RADIUS; gz <= player.gz + WALL_VIEW_RADIUS; gz++) {
           if (!isCubicleCell(gx, gz)) continue;
-          const cx = (gx + 0.5) * CELL_SIZE;
-          const cz = (gz + 0.5) * CELL_SIZE;
-          for (let q = 0; q < CUBICLE_QUAD_SCALES.length; q++) {
-            if (cubicleCount >= cubiclePool.length) break;
-            const [sx, sz] = CUBICLE_QUAD_SCALES[q];
-            const cm = cubiclePool[cubicleCount++];
-            cm.position.set(cx, 0, cz);
-            cm.rotation.set(0, 0, 0);
-            cm.scale.set(sx, 1, sz);
-            cm.visible = true;
-          }
           if (cubicleCount >= cubiclePool.length) break;
+          const cm = cubiclePool[cubicleCount++];
+          cm.position.set((gx + 0.5) * CELL_SIZE, 0, (gz + 0.5) * CELL_SIZE);
+          cm.rotation.set(0, 0, 0);
+          cm.scale.set(1, 1, 1);
+          cm.visible = true;
         }
         if (cubicleCount >= cubiclePool.length) break;
       }
