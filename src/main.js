@@ -892,6 +892,48 @@ async function init() {
   vWalls.receiveShadow = true;
   scene.add(vWalls);
 
+  const BASEBOARD_HEIGHT = 0.13;
+  const BASEBOARD_PROTRUSION = 0.04;
+  const baseboardMat = new THREE.MeshStandardMaterial({
+    color: 0x4a4d52,
+    roughness: 0.75,
+    metalness: 0.0,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+
+  const hBaseboardGeo = new THREE.BoxGeometry(
+    CELL_SIZE + WALL_THICKNESS + BASEBOARD_PROTRUSION,
+    BASEBOARD_HEIGHT,
+    WALL_THICKNESS + BASEBOARD_PROTRUSION
+  );
+  hBaseboardGeo.translate(0, BASEBOARD_HEIGHT * 0.5, 0);
+  const hBaseboards = new THREE.InstancedMesh(
+    hBaseboardGeo,
+    baseboardMat,
+    MAX_WALL_INSTANCES
+  );
+  hBaseboards.frustumCulled = false;
+  hBaseboards.receiveShadow = true;
+  scene.add(hBaseboards);
+
+  const vBaseboardHeight = BASEBOARD_HEIGHT - 0.002;
+  const vBaseboardGeo = new THREE.BoxGeometry(
+    WALL_THICKNESS + BASEBOARD_PROTRUSION - 0.002,
+    vBaseboardHeight,
+    CELL_SIZE + WALL_THICKNESS + BASEBOARD_PROTRUSION
+  );
+  vBaseboardGeo.translate(0, vBaseboardHeight * 0.5, 0);
+  const vBaseboards = new THREE.InstancedMesh(
+    vBaseboardGeo,
+    baseboardMat,
+    MAX_WALL_INSTANCES
+  );
+  vBaseboards.frustumCulled = false;
+  vBaseboards.receiveShadow = true;
+  scene.add(vBaseboards);
+
   let audioCtx = null;
   const keyBuffers = [];
   const footstepBuffers = [];
@@ -2749,9 +2791,10 @@ async function init() {
   function updateTypedHighlights() {
     const len = inputBuffer.length;
     const { charEndUV } = getCurrentFloorAtlas();
+    const primary = getPrimarySpeakerSlot();
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       const slot = encounterSlots[i];
-      if (len > 0 && slot.alive && slot.phrase.startsWith(inputBuffer)) {
+      if (len > 0 && slot === primary && slot.alive && slot.phrase.startsWith(inputBuffer)) {
         const ends = charEndUV[slot.phraseIndex];
         typedUArray[i * 2 + 0] = ends[len * 2 + 0];
         typedUArray[i * 2 + 1] = ends[len * 2 + 1];
@@ -2772,22 +2815,77 @@ async function init() {
   let encounterCenterZ = 0;
   let encounterRx = 1;
   let encounterRz = 0;
+  let encounterForwardX = 0;
+  let encounterForwardZ = 1;
+  let primarySpeakerIndex = -1;
+
+  function getPrimarySpeakerSlot() {
+    if (
+      primarySpeakerIndex >= 0 &&
+      primarySpeakerIndex < MAX_ENCOUNTER_MEN &&
+      encounterSlots[primarySpeakerIndex].alive
+    ) {
+      return encounterSlots[primarySpeakerIndex];
+    }
+    return null;
+  }
+
+  function ensurePrimarySpeaker(resetReveal = false) {
+    if (getPrimarySpeakerSlot()) return primarySpeakerIndex;
+    for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
+      if (encounterSlots[i].alive) {
+        primarySpeakerIndex = i;
+        if (resetReveal) {
+          encounterSlots[i].reveal = 0;
+          revealArray[i] = 0;
+          revealAttr.needsUpdate = true;
+        }
+        return i;
+      }
+    }
+    primarySpeakerIndex = -1;
+    return -1;
+  }
+
+  const FLANK_OFFSETS_BY_SECONDARY_COUNT = {
+    1: [0.82],
+    2: [-0.86, 0.86],
+    3: [-1.02, -0.46, 0.92],
+  };
 
   function arrangeEncounterSlots(snapLabelY = false) {
-    const aliveSlots = encounterSlots.filter((s) => s.alive);
-    const count = aliveSlots.length;
-    if (count === 0) return;
+    const aliveIndices = [];
+    for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
+      if (encounterSlots[i].alive) aliveIndices.push(i);
+    }
+    const count = aliveIndices.length;
+    if (count === 0) {
+      primarySpeakerIndex = -1;
+      return;
+    }
 
-    const spacing = count === 4 ? 0.85 : count === 3 ? 0.95 : 1.1;
-    for (let k = 0; k < count; k++) {
-      const slot = aliveSlots[k];
-      const offset = (k - (count - 1) * 0.5) * spacing;
-      slot.targetX = encounterCenterX + encounterRx * offset;
-      slot.targetZ = encounterCenterZ + encounterRz * offset;
-      slot.targetLabelY =
-        count === 1
-          ? MAN_HEIGHT + 0.3
-          : MAN_HEIGHT + (k % 2 === 0 ? 0.24 : 0.76);
+    const primaryIdx = ensurePrimarySpeaker(false);
+    const secondaryIndices = aliveIndices.filter((idx) => idx !== primaryIdx);
+    const flankOffsets = FLANK_OFFSETS_BY_SECONDARY_COUNT[secondaryIndices.length] || [];
+
+    const primarySlot = encounterSlots[primaryIdx];
+    const primaryDepth = count > 1 ? 0.18 : 0;
+    primarySlot.targetX = encounterCenterX + encounterForwardX * primaryDepth;
+    primarySlot.targetZ = encounterCenterZ + encounterForwardZ * primaryDepth;
+    primarySlot.targetLabelY = MAN_HEIGHT + 0.3;
+    if (snapLabelY) {
+      primarySlot.labelY = primarySlot.targetLabelY;
+    }
+
+    for (let k = 0; k < secondaryIndices.length; k++) {
+      const slot = encounterSlots[secondaryIndices[k]];
+      const lateralOffset = flankOffsets[k] ?? 0;
+      const depthOffset = -0.22;
+      slot.targetX =
+        encounterCenterX + encounterRx * lateralOffset + encounterForwardX * depthOffset;
+      slot.targetZ =
+        encounterCenterZ + encounterRz * lateralOffset + encounterForwardZ * depthOffset;
+      slot.targetLabelY = MAN_HEIGHT + 0.3;
       if (snapLabelY) {
         slot.labelY = slot.targetLabelY;
       }
@@ -2825,8 +2923,11 @@ async function init() {
     const forwardStep = 0.85;
     encounterCenterX = centerX + toPlayerX * forwardStep;
     encounterCenterZ = centerZ + toPlayerZ * forwardStep;
+    encounterForwardX = toPlayerX;
+    encounterForwardZ = toPlayerZ;
     encounterRx = Math.cos(player.targetYaw);
     encounterRz = -Math.sin(player.targetYaw);
+    primarySpeakerIndex = 0;
     const spacing = count === 4 ? 0.85 : count === 3 ? 0.95 : 1.1;
     const phrases = getCurrentFloorPhrases();
     const { cols, rows } = getCurrentFloorAtlas();
@@ -2904,57 +3005,51 @@ async function init() {
   }
 
   function hasEncounterPrefixMatch(prefix) {
-    for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
-      const slot = encounterSlots[i];
-      if (slot.alive && slot.phrase.startsWith(prefix)) {
-        return true;
-      }
-    }
-    return false;
+    const primary = getPrimarySpeakerSlot();
+    return Boolean(primary && primary.alive && primary.phrase.startsWith(prefix));
   }
 
   function checkAndClearEncounterMatch(typed) {
-    let matched = false;
+    const primary = getPrimarySpeakerSlot();
+    if (!primary || !primary.alive || primary.phrase !== typed) {
+      return false;
+    }
+
+    primary.alive = false;
+    primary.leaving = true;
+    primary.leaveStepTimer = 0;
+    primary.laughTimer = 0;
+    primary.mat.map = npcVariants[primary.variant].back;
+    primary.mat.needsUpdate = true;
+    const dx = primary.x - player.x;
+    const dz = primary.z - player.z;
+    const dist = Math.hypot(dx, dz) || 1;
+    primary.leaveVx = (dx / dist) * 2.2;
+    primary.leaveVz = (dz / dist) * 2.2;
+    if (!primary.hadError) {
+      spawnPerfectPopup(primary.x, primary.labelY + 0.18, primary.z);
+      playPerfectSound();
+      addXp(25);
+    }
+
     let remaining = 0;
-
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
-      const slot = encounterSlots[i];
-      if (!slot.alive) continue;
-      if (!matched && slot.phrase === typed) {
-        slot.alive = false;
-        slot.leaving = true;
-        slot.leaveStepTimer = 0;
-        slot.laughTimer = 0;
-        slot.mat.map = npcVariants[slot.variant].back;
-        slot.mat.needsUpdate = true;
-        const dx = slot.x - player.x;
-        const dz = slot.z - player.z;
-        const dist = Math.hypot(dx, dz) || 1;
-        slot.leaveVx = (dx / dist) * 2.2;
-        slot.leaveVz = (dz / dist) * 2.2;
-        if (!slot.hadError) {
-          spawnPerfectPopup(slot.x, slot.labelY + 0.18, slot.z);
-          playPerfectSound();
-          addXp(25);
-        }
-        matched = true;
-      } else {
-        remaining++;
-      }
+      if (encounterSlots[i].alive) remaining++;
     }
 
-    if (matched) {
-      if (remaining === 0) {
-        inEncounter = false;
-        inputBuffer = '';
-        updateWpmHud(true);
-        addLog('Escaped the conversation.', '#9be564');
-      } else {
-        arrangeEncounterSlots(false);
-        addLog('Brushed off a coworker.', '#c8e6c9');
-      }
+    if (remaining === 0) {
+      inEncounter = false;
+      primarySpeakerIndex = -1;
+      inputBuffer = '';
+      updateWpmHud(true);
+      addLog('Escaped the conversation.', '#9be564');
+    } else {
+      primarySpeakerIndex = -1;
+      ensurePrimarySpeaker(true);
+      arrangeEncounterSlots(false);
+      addLog('Brushed off a coworker.', '#c8e6c9');
     }
-    return matched;
+    return true;
   }
 
   const nudge = {
@@ -3299,6 +3394,7 @@ async function init() {
     player.yaw = spawnDir * Math.PI * 0.5;
     player.targetYaw = player.yaw;
 
+    primarySpeakerIndex = -1;
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       encounterSlots[i].alive = false;
       encounterSlots[i].leaving = false;
@@ -3377,6 +3473,7 @@ async function init() {
     player.yaw = 0;
     player.targetYaw = 0;
 
+    primarySpeakerIndex = -1;
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       encounterSlots[i].alive = false;
       encounterSlots[i].leaving = false;
@@ -3824,17 +3921,16 @@ async function init() {
         inputBuffer = candidate;
         typePulse = 1.0;
         let gainedNewLetterXp = false;
-        for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
-          const slot = encounterSlots[i];
-          if (
-            slot.alive &&
-            slot.phrase.startsWith(inputBuffer) &&
-            inputBuffer.length > slot.maxTypedLen
-          ) {
-            slot.maxTypedLen = inputBuffer.length;
-            spawnXpPopupForSlot(slot, inputBuffer.length);
-            gainedNewLetterXp = true;
-          }
+        const primary = getPrimarySpeakerSlot();
+        if (
+          primary &&
+          primary.alive &&
+          primary.phrase.startsWith(inputBuffer) &&
+          inputBuffer.length > primary.maxTypedLen
+        ) {
+          primary.maxTypedLen = inputBuffer.length;
+          spawnXpPopupForSlot(primary, inputBuffer.length);
+          gainedNewLetterXp = true;
         }
         if (gainedNewLetterXp) {
           encounterCorrectChars++;
@@ -3849,10 +3945,13 @@ async function init() {
         updateTypedHighlights();
       } else {
         typoPulse = 1.0;
+        const primary = getPrimarySpeakerSlot();
         for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
           const slot = encounterSlots[i];
           const isCandidate =
-            slot.alive && (inputBuffer.length === 0 || slot.phrase.startsWith(inputBuffer));
+            slot === primary &&
+            slot.alive &&
+            (inputBuffer.length === 0 || slot.phrase.startsWith(inputBuffer));
           typoMaskArray[i] = isCandidate ? 1 : 0;
           if (isCandidate) {
             slot.hadError = true;
@@ -3921,22 +4020,30 @@ async function init() {
           wallDummy.rotation.set(0, 0, 0);
           wallDummy.scale.set(1, 1, 1);
           wallDummy.updateMatrix();
-          hWalls.setMatrixAt(hCount++, wallDummy.matrix);
+          hWalls.setMatrixAt(hCount, wallDummy.matrix);
+          hBaseboards.setMatrixAt(hCount, wallDummy.matrix);
+          hCount++;
         }
         if (hasVWall(gx, gz) && vCount < MAX_WALL_INSTANCES) {
           wallDummy.position.set(gx * CELL_SIZE, 0, (gz + 0.5) * CELL_SIZE);
           wallDummy.rotation.set(0, 0, 0);
           wallDummy.scale.set(1, 1, 1);
           wallDummy.updateMatrix();
-          vWalls.setMatrixAt(vCount++, wallDummy.matrix);
+          vWalls.setMatrixAt(vCount, wallDummy.matrix);
+          vBaseboards.setMatrixAt(vCount, wallDummy.matrix);
+          vCount++;
         }
       }
     }
 
     hWalls.count = hCount;
     vWalls.count = vCount;
+    hBaseboards.count = hCount;
+    vBaseboards.count = vCount;
     hWalls.instanceMatrix.needsUpdate = true;
     vWalls.instanceMatrix.needsUpdate = true;
+    hBaseboards.instanceMatrix.needsUpdate = true;
+    vBaseboards.instanceMatrix.needsUpdate = true;
   }
 
   function triggerBossCatch() {
@@ -4567,9 +4674,13 @@ async function init() {
       slot.mesh.position.set(slot.x, 0, slot.z);
       slot.mesh.rotation.set(0, billboardYaw, 0);
 
-      labelDummy.position.set(slot.x, slot.labelY, slot.z);
-      labelDummy.quaternion.copy(camera.quaternion);
-      labelDummy.scale.set(1, 1, 1);
+      if (i === primarySpeakerIndex) {
+        labelDummy.position.set(slot.x, slot.labelY, slot.z);
+        labelDummy.quaternion.copy(camera.quaternion);
+        labelDummy.scale.set(1, 1, 1);
+      } else {
+        labelDummy.scale.set(0, 0, 0);
+      }
       labelDummy.updateMatrix();
       instancedLabels.setMatrixAt(i, labelDummy.matrix);
     }
