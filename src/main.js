@@ -27,6 +27,8 @@ const MAX_WALL_INSTANCES = (WALL_VIEW_RADIUS * 2 + 2) * (WALL_VIEW_RADIUS * 2 + 
 
 const ANXIETY_TYPO_PENALTY = 5;
 const ENCOUNTER_ANXIETY_RATE = 1.4;
+const FLOOR_TYPO_PENALTIES = [ANXIETY_TYPO_PENALTY, 7, 9, 12, 15];
+const FLOOR_ANXIETY_RATES = [ENCOUNTER_ANXIETY_RATE, 1.9, 2.5, 3.2, 4.0];
 const POTTY_FILL_RATE = 0.18;
 const POTTY_VENDING_BOOST = 4.5;
 const POTTY_VENDING_DURATION = 9;
@@ -204,7 +206,7 @@ function canStep(gx, gz, dx, dz) {
   return true;
 }
 
-const PHRASES = [
+const FLOOR_1_PHRASES = [
   'so how about this weather',
   'working hard or hardly working',
   'is it friday yet or what',
@@ -286,6 +288,226 @@ const PHRASES = [
   'keep the change you earned it',
   'see you around the water cooler',
   'take care drive safe out there',
+];
+
+const FLOOR_2_PHRASES = [
+  'per my previous email that you ignored',
+  'sorry i was on mute the whole time',
+  'can everybody see my screen right now',
+  'someone heated fish in the microwave again',
+  'happy to hop on a quick call about this',
+  'putting some time on your calendar tomorrow',
+  'just bumping this to the top of your inbox',
+  'this meeting could have been an email',
+  'i accidentally replied all to everyone',
+  'my slack status says active but i left',
+  'who took the good chair from my desk',
+  'friendly reminder that the deadline is noon',
+  'thanks in advance for the quick turnaround',
+  'is anyone else having issues with the wifi',
+  'nobody reads past the second bullet point',
+  'we are waiting on a few more folks to join',
+  'do we have a hard stop at three thirty',
+  'i think your microphone is echoing badly',
+  'attached please find the wrong document',
+  'just looping in sarah for visibility here',
+  'i muted the group chat three months ago',
+  'running five minutes late to the next sync',
+  'our printer only works when you threaten it',
+  'just following up on my earlier follow up',
+  'my mouse is moving so nobody worries',
+  'i have been staring at cell b fourteen',
+  'typing something loud so i look busy',
+  'can you resend that link i lost it again',
+  'nobody knows who owns this spreadsheet',
+  'my calendar looks like a game of tetris',
+  'i forgot to hit send on that draft tuesday',
+  'please see attached and share your thoughts',
+  'just flagging this before i log off early',
+  'sorry for the delay i was staring outside',
+  'let us take a quick five minute break',
+  'looks like we lost your audio for a sec',
+  'please do not print this unless necessary',
+  'i am drowning in unread notifications',
+  'someone left half a donut in the box',
+  'not sure if you saw my ping from earlier',
+  'i will circle back once the dust settles',
+  'quick question that takes forty minutes',
+  'let me know if you have any questions',
+  'marking myself safe from that town hall',
+  'grabbing a coffee before the two pm',
+  'whoever labeled these folders hates us',
+  'that calendar invite ruined my whole week',
+  'i am strictly on do not disturb today',
+  'closing my laptop with mild violence',
+  'see you on the other side of monday',
+];
+
+const FLOOR_3_PHRASES = [
+  'we need to align on our core deliverables',
+  'we should socialize this deck with leadership',
+  'i simply lack the bandwidth to care today',
+  'we are building the airplane while flying it',
+  'this is less a failure and more a pivot',
+  'let us double click on what went wrong here',
+  'we need radical transparency on these numbers',
+  'putting a pin in that until next quarter',
+  'our team is basically one big weird family',
+  'how do we move the needle before friday',
+  'taking this delicate conversation offline',
+  'we are chasing quick wins and low fruit',
+  'i need more granularity on that timeline',
+  'nobody wants to own this action item today',
+  'we should cascade these learnings downward',
+  'the optics on that memo are not fantastic',
+  'scheduling a quick pre meeting for the sync',
+  'our velocity dropped right after pizza day',
+  'we need to stress test this terrible idea',
+  'please wear your entrepreneurial hat today',
+  'trying to herd cats across five time zones',
+  'we are experiencing a slight bandwidth crunch',
+  'unpacking why nobody actually read the handbook',
+  'our north star metric is pure confusion',
+  'giving one hundred ten percent until noon',
+  'we need a holistic view of the bottleneck',
+  'let us brainstorm in the breakout room now',
+  'i am pivoting away from doing real work',
+  'that sounds like a next quarter problem',
+  'we are sunsetting the breakroom microwave',
+  'establishing a healthier meeting cadence',
+  'stakeholders are asking very tough questions',
+  'trying to right size my morning expectations',
+  'we must leverage our cross functional chaos',
+  'my key takeaway is that nobody knows anything',
+  'let us pressure test this before the board',
+  'we are committed to agile panic management',
+  'onboarding new hires into pure bewilderment',
+  'that concept has zero traction with management',
+  'let us blue sky some unrealistic deadlines',
+  'we need full visibility into your afternoon',
+  'synergy means two people sighing in unison',
+  'our pipeline is clogged with bad decisions',
+  'please benchmark this against yesterday',
+  'we are empowering you to stay late tonight',
+  'calibrating our expectations steadily downward',
+  'our culture thrives on vague encouragement',
+  'we need to circle the wagons before lunch',
+  'documenting best practices nobody will read',
+  'turning blockers into stepping stones daily',
+];
+
+const FLOOR_4_PHRASES = [
+  'we are operationalizing our collective burnout',
+  'monetizing synergy across vertical silos today',
+  'incentivizing proactive workplace survival skills',
+  'demonstrating radical accountability for nothing',
+  'our strategic roadmap is basically a circle',
+  'architecting a frictionless morning commute',
+  'optimizing shareholder value during lunch hour',
+  'reimagining our core competency in confusion',
+  'leveraging predictive analytics to skip meetings',
+  'our value proposition remains strictly theoretical',
+  'we must future proof this failing spreadsheet',
+  'facilitating transformational hallway small talk',
+  'disrupting the legacy photocopy machine market',
+  'consolidating overlapping middle management tiers',
+  'deploying agile methodology to avoid actual work',
+  'our quarterly paradigm shift arrived right on time',
+  'accelerating digital transformation via sticky notes',
+  'requiring executive sponsorship for free coffee',
+  'harmonizing disparate calendar invites at scale',
+  'cultivating thought leadership inside the elevator',
+  'our infrastructure cannot support another monday',
+  'establishing formal governance over the fridge',
+  'maximizing return on investment for company pens',
+  'pioneering next generation blank desk staring',
+  'benchmarking operational excellence against chaos',
+  'scaling collaborative misery across every region',
+  'streamlining executive oversight of casual friday',
+  'unlocking latent potential in unpaid interns',
+  'our core narrative lacks measurable authenticity',
+  'engineering seamless integration with the weekend',
+  'reprioritizing high impact initiatives after three',
+  'delivering unprecedented value to nobody at all',
+  'cultivating sustainable cubicle resilience daily',
+  'synthesizing actionable insights from sheer panic',
+  'recalibrating organizational velocity downward',
+  'spearheading an innovative approach to clocking out',
+  'implementing cross departmental silence protocols',
+  'amplifying stakeholder engagement through free pizza',
+  'evaluating strategic alternatives to waking up',
+  'maintaining competitive advantage in badge swiping',
+  'transitioning toward an asynchronous existence',
+  'auditing organizational readiness for five pm',
+  'fostering psychological safety near the shredder',
+  'validating assumptions nobody bothered testing',
+  'eliminating redundancies starting with my alarm',
+  'orchestrating enterprise wide confusion smoothly',
+  'empowering autonomous teams to procrastinate',
+  'standardizing procurement of lukewarm beverages',
+  'driving continuous improvement in sighs per hour',
+  'measuring qualitative sentiment around leftovers',
+];
+
+const FLOOR_5_PHRASES = [
+  'reconceptualizing macroeconomic anxiety before breakfast',
+  'institutionalizing unprecedented organizational bewilderment',
+  'democratizing cross functional procrastination at scale',
+  'hyperpersonalization of meaningless quarterly dashboards',
+  'collateralizing intangible water cooler goodwill today',
+  'orchestrating decentralized cubicle interoperability',
+  'compartmentalizing existential dread between spreadsheets',
+  'operationalizing indistinguishable corporate jargon daily',
+  'contextualizing our transformational paradigm collapse',
+  'decentralizing executive oversight of the breakroom sink',
+  'reprioritizing multidimensional shareholder dissatisfaction',
+  'monetizing uncharacteristic enthusiasm on monday morning',
+  'oversimplification of catastrophically broken processes',
+  'institutionalizing frictionless weekend recovery plans',
+  'interoperability between decaf coffee and pure willpower',
+  'misrepresentation of prolonged staring as deep strategy',
+  'counterproductive micromanagement of hypothetical metrics',
+  'reconceptualizing holistic ergonomics for aching spines',
+  'hypergrowth sustainability inside a windowless basement',
+  'disproportionately compensating ceremonial committee chairs',
+  'contextualizing entrepreneurial burnout on sticky notes',
+  'decentralization of accountability when printers explode',
+  'systematizing indistinguishable executive summaries now',
+  'democratizing predictive analytics for afternoon snacks',
+  'collateralizing unverified assumptions for next quarter',
+  'institutionalizing disproportionate panic before deadlines',
+  'transformational leadership inside the photocopy queue',
+  'compartmentalizing macroeconomic uncertainty into folders',
+  'interoperability across incompatible calendar ecosystems',
+  'reconceptualizing atmospheric morale during layoffs',
+  'hyperpersonalizing automated rejection correspondence',
+  'operationalizing unintelligible consultant deliverables',
+  'unprecedented alignment across completely imaginary silos',
+  'contextualizing structural inefficiencies with pie charts',
+  'monetizing cross jurisdictional stapler governance',
+  'decentralizing strategic responsibility toward interns',
+  'orchestrating multidimensional buzzword proliferation',
+  'oversimplification of complex interpersonal disasters',
+  'institutionalizing performative collaboration every hour',
+  'compartmentalizing counterproductive meeting invitations',
+  'reprioritizing nonessential administrative compliance',
+  'democratizing enterprise level indifference sustainably',
+  'collateralizing speculative productivity projections',
+  'interoperability between legacy systems and duct tape',
+  'reconceptualizing mandatory fun as structural synergy',
+  'disproportionately celebrating mediocre quarterly gains',
+  'hyperpersonalization of passive aggressive reminders',
+  'operationalizing unsustainable expectations effortlessly',
+  'contextualizing unmitigated chaos as agile iteration',
+  'institutionalizing permanent out of office enlightenment',
+];
+
+const FLOOR_PHRASES = [
+  FLOOR_1_PHRASES,
+  FLOOR_2_PHRASES,
+  FLOOR_3_PHRASES,
+  FLOOR_4_PHRASES,
+  FLOOR_5_PHRASES,
 ];
 
 function splitPhraseCentered(ctx, phrase, maxW) {
@@ -946,19 +1168,29 @@ async function init() {
   const manBackTexture = textureLoader.load('/man-back.png');
   manBackTexture.colorSpace = THREE.SRGBColorSpace;
 
+  const manLeftTexture = textureLoader.load('/man-left.png');
+  manLeftTexture.colorSpace = THREE.SRGBColorSpace;
+
+  const manRightTexture = textureLoader.load('/man-right.png');
+  manRightTexture.colorSpace = THREE.SRGBColorSpace;
+
   const manGeo = new THREE.PlaneGeometry(MAN_WIDTH, MAN_HEIGHT);
   manGeo.translate(0, MAN_HEIGHT * 0.5, 0);
 
-  const idleManMat = new THREE.MeshStandardMaterial({
-    map: manTexture,
-    alphaTest: 0.35,
-    roughness: 0.9,
-    metalness: 0.0,
-  });
-
-  const idleMenMesh = new THREE.InstancedMesh(manGeo, idleManMat, MAX_IDLE_MEN);
-  idleMenMesh.frustumCulled = false;
-  scene.add(idleMenMesh);
+  const idleMenMeshes = [manTexture, manLeftTexture, manRightTexture, manBackTexture].map(
+    (tex) => {
+      const mat = new THREE.MeshStandardMaterial({
+        map: tex,
+        alphaTest: 0.35,
+        roughness: 0.9,
+        metalness: 0.0,
+      });
+      const mesh = new THREE.InstancedMesh(manGeo, mat, MAX_IDLE_MEN);
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      return mesh;
+    }
+  );
 
   const bossTexture = textureLoader.load('/boss.png');
   bossTexture.colorSpace = THREE.SRGBColorSpace;
@@ -1022,7 +1254,33 @@ async function init() {
     };
   });
 
-  const { texture: atlasTexture, cols, rows, charEndUV } = createPhraseAtlasTexture(PHRASES);
+  const floorAtlases = FLOOR_PHRASES.map((phrases) => createPhraseAtlasTexture(phrases));
+  let floorLevel = 1;
+
+  function getFloorTierIndex() {
+    return Math.min(Math.max(floorLevel, 1), FLOOR_PHRASES.length) - 1;
+  }
+
+  function getFloorTypoPenalty() {
+    return FLOOR_TYPO_PENALTIES[getFloorTierIndex()];
+  }
+
+  function getFloorEncounterAnxietyRate() {
+    return FLOOR_ANXIETY_RATES[getFloorTierIndex()];
+  }
+
+  function getCurrentFloorPhrases() {
+    return FLOOR_PHRASES[getFloorTierIndex()];
+  }
+
+  function getCurrentFloorAtlas() {
+    return floorAtlases[getFloorTierIndex()];
+  }
+
+  function syncFloorPhraseAtlas() {
+    labelMat.uniforms.uMap.value = getCurrentFloorAtlas().texture;
+  }
+
   const labelGeo = new THREE.PlaneGeometry(1.65, 0.42);
   const uvRects = new Float32Array(MAX_ENCOUNTER_MEN * 4);
   const typedUArray = new Float32Array(MAX_ENCOUNTER_MEN * 2);
@@ -1034,7 +1292,7 @@ async function init() {
     uniforms: THREE.UniformsUtils.merge([
       THREE.UniformsLib.fog,
       {
-        uMap: { value: atlasTexture },
+        uMap: { value: floorAtlases[0].texture },
         uTime: { value: 0 },
         uTypePulse: { value: 0 },
         uTypoPulse: { value: 0 },
@@ -1165,6 +1423,12 @@ async function init() {
 
   const clearedCells = new Set();
   const usedVendingCells = new Set();
+  const spawnedManCells = new Set();
+  const idleMen = [];
+  const IDLE_MAN_ACTIVE_RADIUS = WALL_VIEW_RADIUS + 2;
+  const IDLE_MAN_TILE_MARGIN = 0.72;
+  const IDLE_MAN_MIN_SPEED = 0.42;
+  const IDLE_MAN_MAX_SPEED = 0.68;
 
   function hasIdleManSpawn(gx, gz) {
     if (gx === 0 && gz === 0) return false;
@@ -1172,9 +1436,179 @@ async function init() {
     return hash2D(gx, gz, (worldSeed + 77) | 0) < 0.16;
   }
 
+  function getIdleManAt(gx, gz) {
+    for (let i = 0; i < idleMen.length; i++) {
+      const man = idleMen[i];
+      if (!man.cleared && man.gx === gx && man.gz === gz) {
+        return man;
+      }
+    }
+    return null;
+  }
+
   function hasIdleManAt(gx, gz) {
-    if (clearedCells.has(`${gx},${gz}`)) return false;
-    return hasIdleManSpawn(gx, gz);
+    return getIdleManAt(gx, gz) !== null;
+  }
+
+  function isTileReservedByOtherMan(gx, gz, selfMan) {
+    for (let i = 0; i < idleMen.length; i++) {
+      const other = idleMen[i];
+      if (other.cleared || other === selfMan) continue;
+      if (
+        (other.gx === gx && other.gz === gz) ||
+        (other.targetGx === gx && other.targetGz === gz)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function pickNextManDestination(man) {
+    const canCross = Math.random() < 0.32;
+    if (canCross) {
+      const candidates = [];
+      for (const [dx, dz] of DIR_VECTORS) {
+        if (!canStep(man.gx, man.gz, dx, dz)) continue;
+        const nx = man.gx + dx;
+        const nz = man.gz + dz;
+        if (isCubicleCell(nx, nz)) continue;
+        if (nx === player.gx && nz === player.gz) continue;
+        if (devState.boss && nx === boss.gx && nz === boss.gz) continue;
+        if (
+          Math.abs(nx - player.gx) > IDLE_MAN_ACTIVE_RADIUS ||
+          Math.abs(nz - player.gz) > IDLE_MAN_ACTIVE_RADIUS
+        ) {
+          continue;
+        }
+        if (isTileReservedByOtherMan(nx, nz, man)) continue;
+        candidates.push([nx, nz]);
+      }
+      if (candidates.length > 0) {
+        const [nx, nz] = candidates[Math.floor(Math.random() * candidates.length)];
+        man.targetGx = nx;
+        man.targetGz = nz;
+        man.targetX = (nx + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
+        man.targetZ = (nz + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
+        man.moving = true;
+        return;
+      }
+    }
+
+    // Meander within the current tile
+    let tx = man.x;
+    let tz = man.z;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      tx = (man.gx + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
+      tz = (man.gz + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
+      if (Math.hypot(tx - man.x, tz - man.z) >= 0.28) break;
+    }
+    man.targetGx = man.gx;
+    man.targetGz = man.gz;
+    man.targetX = tx;
+    man.targetZ = tz;
+    man.moving = true;
+  }
+
+  function updateIdleMen(dt) {
+    for (let gx = player.gx - IDLE_MAN_ACTIVE_RADIUS; gx <= player.gx + IDLE_MAN_ACTIVE_RADIUS; gx++) {
+      for (let gz = player.gz - IDLE_MAN_ACTIVE_RADIUS; gz <= player.gz + IDLE_MAN_ACTIVE_RADIUS; gz++) {
+        const key = `${gx},${gz}`;
+        if (spawnedManCells.has(key) || clearedCells.has(key)) continue;
+        if (!hasIdleManSpawn(gx, gz)) continue;
+        spawnedManCells.add(key);
+        if (gx === player.gx && gz === player.gz) continue;
+        if (isTileReservedByOtherMan(gx, gz, null)) continue;
+
+        const startX = (gx + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * 0.35;
+        const startZ = (gz + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * 0.35;
+        idleMen.push({
+          spawnKey: key,
+          gx,
+          gz,
+          targetGx: gx,
+          targetGz: gz,
+          x: startX,
+          z: startZ,
+          targetX: startX,
+          targetZ: startZ,
+          moving: false,
+          waitTimer: 0.3 + Math.random() * 2.2,
+          speed: IDLE_MAN_MIN_SPEED + Math.random() * (IDLE_MAN_MAX_SPEED - IDLE_MAN_MIN_SPEED),
+          bobPhase: Math.random() * Math.PI * 2,
+          bobAmp: 0,
+          cleared: false,
+        });
+      }
+    }
+
+    for (let i = 0; i < idleMen.length; i++) {
+      const man = idleMen[i];
+      if (man.cleared) continue;
+      if (
+        Math.abs(man.gx - player.gx) > IDLE_MAN_ACTIVE_RADIUS ||
+        Math.abs(man.gz - player.gz) > IDLE_MAN_ACTIVE_RADIUS
+      ) {
+        continue;
+      }
+
+      if (
+        (man.targetGx !== man.gx || man.targetGz !== man.gz) &&
+        man.targetGx === player.gx &&
+        man.targetGz === player.gz
+      ) {
+        man.targetGx = man.gx;
+        man.targetGz = man.gz;
+        man.targetX = (man.gx + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
+        man.targetZ = (man.gz + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
+        man.moving = true;
+      }
+
+      if (man.moving) {
+        const dx = man.targetX - man.x;
+        const dz = man.targetZ - man.z;
+        const dist = Math.hypot(dx, dz);
+        const step = man.speed * dt;
+        if (dist <= step || dist < 0.01) {
+          man.x = man.targetX;
+          man.z = man.targetZ;
+          man.gx = Math.floor(man.x / CELL_SIZE);
+          man.gz = Math.floor(man.z / CELL_SIZE);
+          man.targetGx = man.gx;
+          man.targetGz = man.gz;
+          man.moving = false;
+          man.waitTimer = 1.4 + Math.random() * 2.8;
+        } else {
+          const nextX = man.x + (dx / dist) * step;
+          const nextZ = man.z + (dz / dist) * step;
+          const nextGx = Math.floor(nextX / CELL_SIZE);
+          const nextGz = Math.floor(nextZ / CELL_SIZE);
+          if (
+            (nextGx !== man.gx || nextGz !== man.gz) &&
+            nextGx === player.gx &&
+            nextGz === player.gz
+          ) {
+            man.targetGx = man.gx;
+            man.targetGz = man.gz;
+            man.targetX = (man.gx + 0.5) * CELL_SIZE;
+            man.targetZ = (man.gz + 0.5) * CELL_SIZE;
+          } else {
+            man.x = nextX;
+            man.z = nextZ;
+            man.gx = nextGx;
+            man.gz = nextGz;
+          }
+        }
+      } else {
+        man.waitTimer -= dt;
+        if (man.waitTimer <= 0) {
+          pickNextManDestination(man);
+        }
+      }
+
+      const targetBob = man.moving ? 1 : 0;
+      man.bobAmp += (targetBob - man.bobAmp) * Math.min(1, dt * 8);
+    }
   }
 
   let vendingWallOffset = CELL_SIZE * 0.5 - WALL_THICKNESS * 0.5 - 0.4;
@@ -1701,6 +2135,27 @@ async function init() {
 
   const MAX_CUBICLE_INSTANCES = 80;
   const cubiclePool = [];
+  const officeChairPool = [];
+  const officeChairTexture = textureLoader.load('/office-chair.png');
+  officeChairTexture.colorSpace = THREE.SRGBColorSpace;
+  const officeChairMat = new THREE.MeshStandardMaterial({
+    map: officeChairTexture,
+    roughness: 0.85,
+    metalness: 0.05,
+    transparent: true,
+    alphaTest: 0.1,
+  });
+  const officeChairHeight = 1.05;
+  const officeChairWidth = officeChairHeight * (1199 / 1312);
+  const officeChairGeo = new THREE.PlaneGeometry(officeChairWidth, officeChairHeight);
+  officeChairGeo.translate(0, officeChairHeight * 0.5, 0);
+
+  for (let i = 0; i < MAX_CUBICLE_INSTANCES; i++) {
+    const chairMesh = new THREE.Mesh(officeChairGeo, officeChairMat);
+    chairMesh.visible = false;
+    scene.add(chairMesh);
+    officeChairPool.push(chairMesh);
+  }
   const cubicleDividerTexture = textureLoader.load('/water-cooler.png');
   cubicleDividerTexture.colorSpace = THREE.SRGBColorSpace;
   cubicleDividerTexture.flipY = false;
@@ -1949,6 +2404,7 @@ async function init() {
 
   function updateTypedHighlights() {
     const len = inputBuffer.length;
+    const { charEndUV } = getCurrentFloorAtlas();
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       const slot = encounterSlots[i];
       if (len > 0 && slot.alive && slot.phrase.startsWith(inputBuffer)) {
@@ -1998,6 +2454,11 @@ async function init() {
     inEncounter = true;
     encounterCellKey = `${mx},${mz}`;
     clearedCells.add(encounterCellKey);
+    const man = getIdleManAt(mx, mz);
+    if (man) {
+      man.cleared = true;
+      clearedCells.add(man.spawnKey);
+    }
     inputBuffer = '';
 
     const roll = Math.random();
@@ -2009,6 +2470,8 @@ async function init() {
 
     const centerX = (mx + 0.5) * CELL_SIZE;
     const centerZ = (mz + 0.5) * CELL_SIZE;
+    const startX = man ? man.x : centerX;
+    const startZ = man ? man.z : centerZ;
     const toPlayerX = Math.sin(player.targetYaw);
     const toPlayerZ = Math.cos(player.targetYaw);
     const forwardStep = 0.85;
@@ -2017,6 +2480,8 @@ async function init() {
     encounterRx = Math.cos(player.targetYaw);
     encounterRz = -Math.sin(player.targetYaw);
     const spacing = count === 4 ? 0.85 : count === 3 ? 0.95 : 1.1;
+    const phrases = getCurrentFloorPhrases();
+    const { cols, rows } = getCurrentFloorAtlas();
 
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       const slot = encounterSlots[i];
@@ -2027,9 +2492,9 @@ async function init() {
         continue;
       }
 
-      let phraseIndex = Math.floor(Math.random() * PHRASES.length);
+      let phraseIndex = Math.floor(Math.random() * phrases.length);
       while (usedPhrases.has(phraseIndex)) {
-        phraseIndex = Math.floor(Math.random() * PHRASES.length);
+        phraseIndex = Math.floor(Math.random() * phrases.length);
       }
       usedPhrases.add(phraseIndex);
 
@@ -2042,15 +2507,15 @@ async function init() {
       slot.mat.map = manTexture;
       slot.mat.needsUpdate = true;
       slot.phraseIndex = phraseIndex;
-      slot.phrase = PHRASES[phraseIndex];
+      slot.phrase = phrases[phraseIndex];
 
       if (i === 0) {
-        slot.x = centerX;
-        slot.z = centerZ;
+        slot.x = startX;
+        slot.z = startZ;
         slot.opacity = 1;
       } else {
-        slot.x = centerX + encounterRx * offset * 1.4;
-        slot.z = centerZ + encounterRz * offset * 1.4;
+        slot.x = startX + encounterRx * offset * 1.4;
+        slot.z = startZ + encounterRz * offset * 1.4;
         slot.opacity = 0;
       }
 
@@ -2343,7 +2808,6 @@ async function init() {
 
   spawnBoss();
 
-  let floorLevel = 1;
   const elevatorTransition = {
     active: false,
     timers: [],
@@ -2362,11 +2826,14 @@ async function init() {
 
   function advanceToNextFloor() {
     floorLevel += 1;
+    syncFloorPhraseAtlas();
     inEncounter = false;
     inputBuffer = '';
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
     mazeChunks.clear();
     clearedCells.clear();
+    spawnedManCells.clear();
+    idleMen.length = 0;
     usedVendingCells.clear();
     vendingShake.active = false;
     vendingShake.t = 0;
@@ -2459,6 +2926,7 @@ async function init() {
 
   function resetGame() {
     floorLevel = 1;
+    syncFloorPhraseAtlas();
     arrivalElevator = null;
     clearElevatorTransition();
     isDead = false;
@@ -2472,6 +2940,8 @@ async function init() {
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
     mazeChunks.clear();
     clearedCells.clear();
+    spawnedManCells.clear();
+    idleMen.length = 0;
     usedVendingCells.clear();
     nudge.active = false;
     nudge.t = 0;
@@ -2935,7 +3405,7 @@ async function init() {
               : 0;
         }
         typoMaskAttr.needsUpdate = true;
-        addAnxiety(ANXIETY_TYPO_PENALTY);
+        addAnxiety(getFloorTypoPenalty());
       }
       triggerRandomManLaugh();
     }
@@ -3286,22 +3756,59 @@ async function init() {
 
     updateWallInstances(player.gx, player.gz);
 
-    let idleCount = 0;
-    for (let gx = player.gx - WALL_VIEW_RADIUS; gx <= player.gx + WALL_VIEW_RADIUS; gx++) {
-      for (let gz = player.gz - WALL_VIEW_RADIUS; gz <= player.gz + WALL_VIEW_RADIUS; gz++) {
-        if (!hasIdleManAt(gx, gz) || idleCount >= MAX_IDLE_MEN) continue;
-        const mx = (gx + 0.5) * CELL_SIZE;
-        const mz = (gz + 0.5) * CELL_SIZE;
-        const billboardYaw = Math.atan2(player.x - mx, player.z - mz);
-        dummy.position.set(mx, 0, mz);
-        dummy.rotation.set(0, billboardYaw, 0);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        idleMenMesh.setMatrixAt(idleCount++, dummy.matrix);
-      }
+    if (!isDead && !bossCatch.active && !elevatorTransition.active) {
+      updateIdleMen(dt);
     }
-    idleMenMesh.count = idleCount;
-    idleMenMesh.instanceMatrix.needsUpdate = true;
+
+    const idleCounts = [0, 0, 0, 0];
+    for (let i = 0; i < idleMen.length; i++) {
+      const man = idleMen[i];
+      if (man.cleared) continue;
+      if (
+        Math.abs(man.gx - player.gx) > WALL_VIEW_RADIUS ||
+        Math.abs(man.gz - player.gz) > WALL_VIEW_RADIUS
+      ) {
+        continue;
+      }
+
+      let spriteIdx = 0; // 0: front, 1: left, 2: right, 3: back
+      if (man.moving) {
+        const mvX = man.targetX - man.x;
+        const mvZ = man.targetZ - man.z;
+        const mvLen = Math.hypot(mvX, mvZ);
+        if (mvLen > 0.001) {
+          const moveX = mvX / mvLen;
+          const moveZ = mvZ / mvLen;
+          const toManX = man.x - player.x;
+          const toManZ = man.z - player.z;
+          const toManLen = Math.hypot(toManX, toManZ) || 1;
+          const dirX = toManX / toManLen;
+          const dirZ = toManZ / toManLen;
+
+          const dotForward = moveX * dirX + moveZ * dirZ;
+          const dotRight = moveX * -dirZ + moveZ * dirX;
+
+          if (Math.abs(dotRight) >= Math.abs(dotForward)) {
+            spriteIdx = dotRight > 0 ? 2 : 1;
+          } else if (dotForward > 0) {
+            spriteIdx = 3;
+          }
+        }
+      }
+
+      if (idleCounts[spriteIdx] >= MAX_IDLE_MEN) continue;
+      const billboardYaw = Math.atan2(player.x - man.x, player.z - man.z);
+      const bobY = Math.abs(Math.sin(elapsed * 5.5 + man.bobPhase)) * 0.032 * man.bobAmp;
+      dummy.position.set(man.x, bobY, man.z);
+      dummy.rotation.set(0, billboardYaw, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      idleMenMeshes[spriteIdx].setMatrixAt(idleCounts[spriteIdx]++, dummy.matrix);
+    }
+    for (let s = 0; s < idleMenMeshes.length; s++) {
+      idleMenMeshes[s].count = idleCounts[s];
+      idleMenMeshes[s].instanceMatrix.needsUpdate = true;
+    }
 
     if (vendingShake.active) {
       vendingShake.t += dt;
@@ -3471,22 +3978,37 @@ async function init() {
     }
 
     let cubicleCount = 0;
+    let officeChairCount = 0;
     if (cubiclePool.length > 0) {
       for (let gx = player.gx - WALL_VIEW_RADIUS; gx <= player.gx + WALL_VIEW_RADIUS; gx++) {
         for (let gz = player.gz - WALL_VIEW_RADIUS; gz <= player.gz + WALL_VIEW_RADIUS; gz++) {
           if (!isCubicleCell(gx, gz)) continue;
           if (cubicleCount >= cubiclePool.length) break;
+          const cellCenterX = (gx + 0.5) * CELL_SIZE;
+          const cellCenterZ = (gz + 0.5) * CELL_SIZE;
           const cm = cubiclePool[cubicleCount++];
-          cm.position.set((gx + 0.5) * CELL_SIZE, 0, (gz + 0.5) * CELL_SIZE);
+          cm.position.set(cellCenterX, 0, cellCenterZ);
           cm.rotation.set(0, 0, 0);
           cm.scale.set(1, 1, 1);
           cm.visible = true;
+
+          if (officeChairCount < officeChairPool.length) {
+            const chairX = cellCenterX - 0.35;
+            const chairZ = cellCenterZ - 0.55;
+            const chm = officeChairPool[officeChairCount++];
+            chm.position.set(chairX, 0, chairZ);
+            chm.rotation.set(0, Math.atan2(player.x - chairX, player.z - chairZ), 0);
+            chm.visible = true;
+          }
         }
         if (cubicleCount >= cubiclePool.length) break;
       }
       for (let cb = cubicleCount; cb < cubiclePool.length; cb++) {
         cubiclePool[cb].visible = false;
       }
+    }
+    for (let ch = officeChairCount; ch < officeChairPool.length; ch++) {
+      officeChairPool[ch].visible = false;
     }
 
     let activeCount = 0;
@@ -3561,7 +4083,7 @@ async function init() {
     }
 
     if (inEncounter && activeCount > 0) {
-      addAnxiety(ENCOUNTER_ANXIETY_RATE * dt);
+      addAnxiety(getFloorEncounterAnxietyRate() * dt);
     }
 
     renderFrame();
