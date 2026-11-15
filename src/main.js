@@ -554,6 +554,7 @@ function createPhraseAtlasTexture(phrases) {
 
   const charEndUV = [];
   const charCenterUV = [];
+  const isSingleLine = [];
 
   for (let i = 0; i < phrases.length; i++) {
     const phrase = phrases[i];
@@ -641,6 +642,7 @@ function createPhraseAtlasTexture(phrases) {
 
     charEndUV.push(ends);
     charCenterUV.push(centers);
+    isSingleLine.push(!line2);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -649,7 +651,7 @@ function createPhraseAtlasTexture(phrases) {
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
 
-  return { texture, cols, rows, charEndUV, charCenterUV };
+  return { texture, cols, rows, charEndUV, charCenterUV, isSingleLine };
 }
 
 function createFloatingTextTexture(text, { fontSize, fillStyle, width, height }) {
@@ -971,6 +973,7 @@ async function init() {
   let deepBassBuffer = null;
   let violinShriekBuffer = null;
   let perfectBuffer = null;
+  let critBuffer = null;
   let byeBuffer = null;
   let peeingBuffer = null;
   let sneezeBuffer = null;
@@ -1162,6 +1165,14 @@ async function init() {
       })
       .catch(() => {});
 
+    fetch('/crit.mp3')
+      .then((res) => res.arrayBuffer())
+      .then((buf) => audioCtx.decodeAudioData(buf))
+      .then((decoded) => {
+        critBuffer = decoded;
+      })
+      .catch(() => {});
+
     fetch('/bye.mp3')
       .then((res) => res.arrayBuffer())
       .then((buf) => audioCtx.decodeAudioData(buf))
@@ -1292,6 +1303,11 @@ async function init() {
 
   function playPerfectSound(volume = 0.8) {
     playBuffer(perfectBuffer, volume);
+  }
+
+  function playCritSound(volume = 0.32) {
+    const pitch = 0.88 + Math.random() * 0.24;
+    playBuffer(critBuffer, volume, pitch);
   }
 
   function playByeSound(volume = 0.85) {
@@ -1536,6 +1552,13 @@ async function init() {
       maxTypedLen: 0,
       hp: 0,
       maxHp: 1,
+      hitShakeTimer: 0,
+      hitShakeDuration: 0.12,
+      hitShakeAmp: 0,
+      critFlashTimer: 0,
+      critFlashDuration: 0.22,
+      corrosiveFlashTimer: 0,
+      corrosiveFlashDuration: 0.16,
     };
   });
 
@@ -1554,12 +1577,17 @@ async function init() {
     return FLOOR_ANXIETY_RATES[getFloorTierIndex()];
   }
 
+  function getPhraseTierIndex() {
+    const baseTier = getFloorTierIndex();
+    return ownedItems.has('sharpie') ? Math.max(0, baseTier - 1) : baseTier;
+  }
+
   function getCurrentFloorPhrases() {
-    return FLOOR_PHRASES[getFloorTierIndex()];
+    return FLOOR_PHRASES[getPhraseTierIndex()];
   }
 
   function getCurrentFloorAtlas() {
-    return floorAtlases[getFloorTierIndex()];
+    return floorAtlases[getPhraseTierIndex()];
   }
 
   function syncFloorPhraseAtlas() {
@@ -1573,6 +1601,7 @@ async function init() {
   const revealArray = new Float32Array(MAX_ENCOUNTER_MEN);
   const typoMaskArray = new Float32Array(MAX_ENCOUNTER_MEN);
   const brokenMaskArray = new Float32Array(MAX_ENCOUNTER_MEN);
+  const singleLineArray = new Float32Array(MAX_ENCOUNTER_MEN);
 
   const labelMat = new THREE.ShaderMaterial({
     uniforms: THREE.UniformsUtils.merge([
@@ -1592,6 +1621,7 @@ async function init() {
       attribute float aReveal;
       attribute float aTypoMask;
       attribute float aBrokenMask;
+      attribute float aSingleLine;
       varying vec2 vUv;
       varying vec4 vUvRect;
       varying float vLocalU;
@@ -1601,6 +1631,7 @@ async function init() {
       varying float vReveal;
       varying float vTypoMask;
       varying float vBrokenMask;
+      varying float vSingleLine;
       #include <fog_pars_vertex>
       void main() {
         vUv = aUvRect.xy + uv * aUvRect.zw;
@@ -1612,6 +1643,7 @@ async function init() {
         vReveal = aReveal;
         vTypoMask = aTypoMask;
         vBrokenMask = aBrokenMask;
+        vSingleLine = aSingleLine;
         vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
@@ -1632,6 +1664,7 @@ async function init() {
       varying float vReveal;
       varying float vTypoMask;
       varying float vBrokenMask;
+      varying float vSingleLine;
       #include <fog_pars_fragment>
       void main() {
         float lineTypedU = (vLocalV > 0.5) ? vTypedU.x : vTypedU.y;
@@ -1665,7 +1698,7 @@ async function init() {
           sampleUv = clamp(sampleUv + jitter, cellMin, cellMax);
         } else if (isTyped && uTypeWaveAge >= 0.0 && uTypeWaveAge < 1.2) {
           float distBehind = 0.0;
-          if (vTypedU.y > 0.0) {
+          if (vSingleLine < 0.5 && vTypedU.y > 0.0) {
             if (vLocalV > 0.5) {
               distBehind = vTypedU.y + max(0.0, vTypedU.x - vLocalU);
             } else {
@@ -1727,12 +1760,14 @@ async function init() {
   const revealAttr = new THREE.InstancedBufferAttribute(revealArray, 1);
   const typoMaskAttr = new THREE.InstancedBufferAttribute(typoMaskArray, 1);
   const brokenMaskAttr = new THREE.InstancedBufferAttribute(brokenMaskArray, 1);
+  const singleLineAttr = new THREE.InstancedBufferAttribute(singleLineArray, 1);
   labelGeo.setAttribute('aUvRect', uvRectAttr);
   labelGeo.setAttribute('aTypedU', typedUAttr);
   labelGeo.setAttribute('aPrevTypedU', prevTypedUAttr);
   labelGeo.setAttribute('aReveal', revealAttr);
   labelGeo.setAttribute('aTypoMask', typoMaskAttr);
   labelGeo.setAttribute('aBrokenMask', brokenMaskAttr);
+  labelGeo.setAttribute('aSingleLine', singleLineAttr);
 
   const instancedLabels = new THREE.InstancedMesh(
     labelGeo,
@@ -1917,6 +1952,9 @@ async function init() {
   dismissPromptSprite.renderOrder = 10;
   dismissPromptSprite.visible = false;
   labelScene.add(dismissPromptSprite);
+  let dismissPromptAnimAge = 0;
+  let dismissPromptSlotIndex = -1;
+  const DISMISS_PROMPT_ANIM_DURATION = 0.28;
 
   const LABEL_WIDTH = 1.65;
   const LABEL_HEIGHT = 0.42;
@@ -1971,7 +2009,7 @@ async function init() {
 
   const xpPopupPool = createPopupPool(xpPopupTexture, 24, 0.28, 0.112, 20);
   const perfectPopupPool = createPopupPool(perfectPopupTexture, 6, 0.72, 0.18, 21);
-  const critPopupPool = createPopupPool(critPopupTexture, 12, 0.44, 0.176, 22);
+  const critPopupPool = createPopupPool(critPopupTexture, 12, 0.3, 0.12, 22);
   const popupLocalOffset = new THREE.Vector3();
 
   function acquirePopup(pool) {
@@ -2283,6 +2321,7 @@ async function init() {
               !bossCatch.active &&
               !elevatorTransition.active &&
               !bladderAccident.active &&
+      !panicAttack.active &&
               !devState.noclip
             ) {
               const approachGx = man.gx;
@@ -3050,6 +3089,165 @@ async function init() {
   const vignette = document.getElementById('vignette');
   const fadeOverlay = document.getElementById('fade-overlay');
   const soiledPantsEl = document.getElementById('soiled-pants');
+  const panicHandsEl = document.getElementById('panic-hands');
+  const itemsHudEl = document.getElementById('items-hud');
+  const itemTooltipEl = document.getElementById('item-tooltip');
+  const itemTooltipNameEl = document.getElementById('item-tooltip-name');
+  const itemTooltipDescEl = document.getElementById('item-tooltip-desc');
+
+  const PASSIVE_ITEMS = {
+    garlic: {
+      id: 'garlic',
+      name: 'Garlic',
+      icon: '/items/garlic.png',
+      description: 'Deals corrosive damage over time once you start speaking.',
+    },
+    'leaky-pen': {
+      id: 'leaky-pen',
+      name: 'Leaky Pen',
+      icon: '/items/leaky-pen.png',
+      description: 'Crits deal collateral damage to other coworkers in a pack.',
+    },
+    'rubber-stamp': {
+      id: 'rubber-stamp',
+      name: 'Rubber Stamp',
+      icon: '/items/rubber-stamp.png',
+      description: 'Increases critical hit chance.',
+    },
+    'sanitation-key-w': {
+      id: 'sanitation-key-w',
+      name: 'Sanitation Key (W)',
+      icon: '/items/sanitation-key-w.png',
+      description: "Unlocks the women's restroom.",
+    },
+    '3-hole-punch': {
+      id: '3-hole-punch',
+      name: '3-Hole Punch',
+      icon: '/items/3-hole-punch.png',
+      description: 'Reduces anxiety when scoring a Perfect.',
+    },
+    'mechanical-keyboard': {
+      id: 'mechanical-keyboard',
+      name: 'Mechanical Keyboard',
+      icon: '/items/mechanical-keyboard.png',
+      description: 'Damage scales up with your current WPM.',
+    },
+    'ergonomic-wrist-rest': {
+      id: 'ergonomic-wrist-rest',
+      name: 'Ergonomic Wrist Rest',
+      icon: '/items/ergonomic-wrist-rest.png',
+      description: 'Absorbs 1 free typo per encounter.',
+    },
+    catheter: {
+      id: 'catheter',
+      name: 'Catheter',
+      icon: '/items/catheter.png',
+      description: 'Bladder fills much more slowly.',
+    },
+    'cubicle-musk': {
+      id: 'cubicle-musk',
+      name: 'Cubicle Musk',
+      icon: '/items/cubicle-musk.png',
+      description: 'Discount cologne. Female coworkers grant +50% XP.',
+    },
+    'employee-of-the-month': {
+      id: 'employee-of-the-month',
+      name: 'Employee of the Month',
+      icon: '/items/employee-of-the-month.png',
+      description: 'Grants +35% XP from all sources.',
+    },
+    'squeeze-toy': {
+      id: 'squeeze-toy',
+      name: 'Squeeze Toy',
+      icon: '/items/squeeze-toy.png',
+      description: 'Reduces all incoming anxiety.',
+    },
+    'air-freshener': {
+      id: 'air-freshener',
+      name: 'Air Freshener',
+      icon: '/items/air-freshener.png',
+      description: 'Relieving yourself in the restroom reduces anxiety if you had to go.',
+    },
+    sharpie: {
+      id: 'sharpie',
+      name: 'Sharpie',
+      icon: '/items/sharpie.png',
+      description: 'Reduces corporate jargon complexity by 1 tier.',
+    },
+  };
+  const ownedItems = new Set();
+  let garlicTickTimer = 0;
+  let wristRestUsedInEncounter = false;
+
+  function hideItemTooltip() {
+    if (itemTooltipEl) {
+      itemTooltipEl.style.display = 'none';
+    }
+  }
+
+  function showItemTooltip(def, anchorEl) {
+    if (!itemTooltipEl || !itemTooltipNameEl || !itemTooltipDescEl) return;
+    itemTooltipNameEl.textContent = def.name;
+    itemTooltipDescEl.textContent = def.description || '';
+    const rect = anchorEl.getBoundingClientRect();
+    itemTooltipEl.style.right = `${Math.round(window.innerWidth - rect.left + 10)}px`;
+    itemTooltipEl.style.top = `${Math.round(rect.top)}px`;
+    itemTooltipEl.style.display = 'block';
+  }
+
+  function renderItemsHud() {
+    if (!itemsHudEl) return;
+    hideItemTooltip();
+    itemsHudEl.innerHTML = '';
+    for (const itemId of ownedItems) {
+      const def = PASSIVE_ITEMS[itemId];
+      if (!def) continue;
+      const img = document.createElement('img');
+      img.className = 'item-icon';
+      img.src = def.icon;
+      img.alt = def.name;
+      img.addEventListener('error', () => {
+        if (!img.dataset.fallback) {
+          img.dataset.fallback = '1';
+          img.src = '/items/err.png';
+        }
+      });
+      img.addEventListener('mouseenter', () => showItemTooltip(def, img));
+      img.addEventListener('mouseleave', hideItemTooltip);
+      img.addEventListener('pointerdown', (e) => e.stopPropagation());
+      img.addEventListener('click', (e) => {
+        e.stopPropagation();
+        ownedItems.delete(itemId);
+        renderItemsHud();
+        syncFloorPhraseAtlas();
+      });
+      itemsHudEl.appendChild(img);
+    }
+  }
+
+  function normalizeItemId(raw) {
+    if (!raw) return null;
+    const key = raw.trim().toLowerCase().replace(/[_\s]+/g, '-');
+    if (key === 'leakypen') return 'leaky-pen';
+    if (key === 'rubberstamp') return 'rubber-stamp';
+    return PASSIVE_ITEMS[key] ? key : null;
+  }
+
+  function getCritChance() {
+    return 0.04 + (ownedItems.has('rubber-stamp') ? 0.1 : 0);
+  }
+
+  function getCurrentWpm() {
+    if (!inEncounter || isDead || encounterCorrectChars <= 0) return 0;
+    const elapsedMinutes = Math.max((performance.now() - encounterStartTime) / 60000, 1 / 60);
+    return Math.round((encounterCorrectChars / 5) / elapsedMinutes);
+  }
+
+  function getEffectiveDamage() {
+    if (devState.dmg <= 0) return 0;
+    const wpmBonus = ownedItems.has('mechanical-keyboard') ? Math.floor(getCurrentWpm() / 35) : 0;
+    return devState.dmg + wpmBonus;
+  }
   const eventLogEl = document.getElementById('event-log');
   const MAX_LOG_ENTRIES = 5;
 
@@ -3228,9 +3426,13 @@ async function init() {
     }
   }
 
-  function addXp(amount) {
+  function addXp(amount, sourceSlot = null) {
     if (isDead || amount <= 0) return;
-    playerXp += amount;
+    let mult = 1;
+    if (ownedItems.has('employee-of-the-month')) mult += 0.35;
+    if (ownedItems.has('cubicle-musk') && sourceSlot && sourceSlot.variant === 1) mult += 0.5;
+    const finalXp = Math.round(amount * mult);
+    playerXp += finalXp;
     let leveledUp = false;
     while (playerXp >= getXpToNextLevel(playerLevel)) {
       playerXp -= getXpToNextLevel(playerLevel);
@@ -3244,21 +3446,21 @@ async function init() {
   }
 
   function addAnxiety(amount) {
-    if (isDead || devState.god) return;
-    const next = Math.min(100, anxiety + amount);
+    if (isDead || panicAttack.active || bladderAccident.active || bossCatch.active || devState.god) return;
+    const effectiveAmount = ownedItems.has('squeeze-toy') ? amount * 0.72 : amount;
+    const next = Math.min(100, anxiety + effectiveAmount);
     if (next !== anxiety) {
       anxiety = next;
       updateAnxietyMeter();
       if (anxiety >= 100) {
-        playPanicAttackSound();
-        triggerDeath('You had a panic attack...');
+        triggerPanicAttack();
       }
     }
   }
 
   function updateTypedHighlights() {
     const len = inputBuffer.length;
-    const { charEndUV } = getCurrentFloorAtlas();
+    const { charEndUV, isSingleLine } = getCurrentFloorAtlas();
     const primary = getPrimarySpeakerSlot();
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       const slot = encounterSlots[i];
@@ -3268,15 +3470,18 @@ async function init() {
         typedUArray[i * 2 + 1] = ends[len * 2 + 1];
         prevTypedUArray[i * 2 + 0] = ends[(len - 1) * 2 + 0];
         prevTypedUArray[i * 2 + 1] = ends[(len - 1) * 2 + 1];
+        singleLineArray[i] = isSingleLine[slot.phraseIndex] ? 1 : 0;
       } else {
         typedUArray[i * 2 + 0] = 0;
         typedUArray[i * 2 + 1] = 0;
         prevTypedUArray[i * 2 + 0] = 0;
         prevTypedUArray[i * 2 + 1] = 0;
+        singleLineArray[i] = 0;
       }
     }
     typedUAttr.needsUpdate = true;
     prevTypedUAttr.needsUpdate = true;
+    singleLineAttr.needsUpdate = true;
   }
 
   let encounterCenterX = 0;
@@ -3365,6 +3570,7 @@ async function init() {
     inEncounter = true;
     encounterStartTime = performance.now();
     encounterCorrectChars = 0;
+    wristRestUsedInEncounter = false;
     lastWpmUpdateTime = 0;
     updateWpmHud(true);
     encounterCellKey = `${mx},${mz}`;
@@ -3424,6 +3630,15 @@ async function init() {
       slot.perfectAwarded = false;
       slot.maxTypedLen = 0;
       slot.laughTimer = 0;
+      slot.hitShakeTimer = 0;
+      slot.hitShakeDuration = 0.12;
+      slot.hitShakeAmp = 0;
+      slot.critFlashTimer = 0;
+      slot.critFlashDuration = 0.22;
+      slot.corrosiveFlashTimer = 0;
+      slot.corrosiveFlashDuration = 0.16;
+      slot.mat.color.setRGB(1, 1, 1);
+      slot.mat.emissive.setRGB(0, 0, 0);
       slot.reveal = 0;
       revealArray[i] = 0;
       slot.variant =
@@ -3493,12 +3708,17 @@ async function init() {
     slot.perfectAwarded = true;
     spawnPerfectPopup(slot.x, slot.labelY + 0.18, slot.z);
     playPerfectSound();
-    addXp(25);
+    addXp(25, slot);
+    if (ownedItems.has('3-hole-punch')) {
+      anxiety = Math.max(0, anxiety - 8);
+      updateAnxietyMeter();
+    }
   }
 
   function defeatEncounterSlot(slot) {
     if (!slot || !slot.alive) return false;
 
+    const wasPrimary = slot === getPrimarySpeakerSlot();
     slot.alive = false;
     slot.hp = 0;
     slot.leaving = true;
@@ -3526,10 +3746,13 @@ async function init() {
       inputBuffer = '';
       updateWpmHud(true);
       addLog('Escaped the conversation.', '#9be564');
-    } else {
+    } else if (wasPrimary) {
       primarySpeakerIndex = -1;
       awaitingNextPhraseStart = true;
       ensurePrimarySpeaker(true);
+      arrangeEncounterSlots(false);
+      addLog('Brushed off a coworker.', '#c8e6c9');
+    } else {
       arrangeEncounterSlots(false);
       addLog('Brushed off a coworker.', '#c8e6c9');
     }
@@ -3579,12 +3802,14 @@ async function init() {
     if (!primary || !primary.alive || primary.phrase !== typed) {
       return false;
     }
-    if (primary.hp > 0) {
+    const healthRatio = primary.maxHp > 0 ? primary.hp / primary.maxHp : 0;
+    if (healthRatio > 0.1) {
       assignNewPhraseToSlot(primarySpeakerIndex);
       awaitingNextPhraseStart = true;
       playRandomGreeting(0.6);
       return true;
     }
+    primary.hp = 0;
     return defeatEncounterSlot(primary);
   }
 
@@ -3648,8 +3873,57 @@ async function init() {
     startSubTyping: null,
   };
 
+  const panicAttack = {
+    active: false,
+    timer: 0,
+    duration: 2.35,
+    promptShown: false,
+    canRestart: false,
+    startSubTyping: null,
+  };
+
+  function updatePanicHands(timer, elapsed, delay = 0) {
+    if (!panicHandsEl) return;
+    const t = Math.max(0, timer - delay);
+    if (t <= 0) {
+      panicHandsEl.style.opacity = '0';
+      panicHandsEl.style.transform = 'translate3d(-50%, 100%, 0)';
+      return;
+    }
+    const riseT = Math.min(1, t / 0.55);
+    const easedRise = 1 - Math.pow(1 - riseT, 3);
+    const baseY = 100 - 96 * easedRise;
+    const opacity = Math.min(1, t / 0.25);
+    const trembleAmp = 0.4 + 0.6 * easedRise;
+    const trembleX = (Math.sin(elapsed * 58) * 10 + Math.cos(elapsed * 91) * 5) * trembleAmp;
+    const trembleY = (Math.cos(elapsed * 67) * 7 + Math.sin(elapsed * 83) * 4) * trembleAmp;
+    const trembleRot = Math.sin(elapsed * 49) * 1.4 * trembleAmp;
+    panicHandsEl.style.opacity = opacity.toFixed(3);
+    panicHandsEl.style.transform = `translate3d(calc(-50% + ${trembleX.toFixed(1)}px), calc(${baseY.toFixed(2)}% + ${trembleY.toFixed(1)}px), 0) rotate(${trembleRot.toFixed(2)}deg)`;
+  }
+
+  function triggerPanicAttack() {
+    if (panicAttack.active || bladderAccident.active || bossCatch.active || isDead || devState.god) return;
+    panicAttack.active = true;
+    panicAttack.timer = 0;
+    panicAttack.promptShown = false;
+    panicAttack.canRestart = false;
+    panicAttack.startSubTyping = null;
+
+    playPanicAttackSound();
+    updateWpmHud(true);
+    anxietyHud.style.transform = '';
+
+    if (panicHandsEl) {
+      panicHandsEl.style.display = 'block';
+      panicHandsEl.style.opacity = '0';
+      panicHandsEl.style.filter = '';
+      panicHandsEl.style.transform = 'translate3d(-50%, 100%, 0)';
+    }
+  }
+
   function triggerBladderAccident() {
-    if (bladderAccident.active || bossCatch.active || isDead || devState.god) return;
+    if (bladderAccident.active || panicAttack.active || bossCatch.active || isDead || devState.god) return;
     bladderAccident.active = true;
     bladderAccident.timer = 0;
     bladderAccident.laughterPlayed = false;
@@ -3841,12 +4115,23 @@ async function init() {
     bladderAccident.promptShown = false;
     bladderAccident.canRestart = false;
     bladderAccident.startSubTyping = null;
+    panicAttack.active = false;
+    panicAttack.timer = 0;
+    panicAttack.promptShown = false;
+    panicAttack.canRestart = false;
+    panicAttack.startSubTyping = null;
     cameraPitch = 0;
     peePuddleMesh.visible = false;
     peePuddleMat.opacity = 0;
     if (soiledPantsEl) {
       soiledPantsEl.style.display = 'none';
       soiledPantsEl.style.opacity = '0';
+    }
+    if (panicHandsEl) {
+      panicHandsEl.style.display = 'none';
+      panicHandsEl.style.opacity = '0';
+      panicHandsEl.style.filter = '';
+      panicHandsEl.style.transform = 'translate3d(-50%, 100%, 0)';
     }
     clearDeathTyping();
     bossMesh.position.set(boss.x, 0, boss.z);
@@ -3958,7 +4243,7 @@ async function init() {
   }
 
   function triggerElevatorTransition() {
-    if (elevatorTransition.active || isDead || bossCatch.active || bladderAccident.active) return;
+    if (elevatorTransition.active || isDead || bossCatch.active || bladderAccident.active || panicAttack.active) return;
     elevatorTransition.active = true;
     playElevatorOpenSound();
     if (fadeOverlay) {
@@ -3981,8 +4266,9 @@ async function init() {
   }
 
   function triggerMensBathroomTransition() {
-    if (elevatorTransition.active || isDead || bossCatch.active || bladderAccident.active) return;
+    if (elevatorTransition.active || isDead || bossCatch.active || bladderAccident.active || panicAttack.active) return;
     elevatorTransition.active = true;
+    const hadToGo = potty >= 25;
     if (fadeOverlay) {
       fadeOverlay.style.opacity = '1';
     }
@@ -3991,6 +4277,10 @@ async function init() {
       potty = 0;
       pottyVendingTimer = 0;
       updatePottyMeter();
+      if (hadToGo && ownedItems.has('air-freshener')) {
+        anxiety = Math.max(0, anxiety - 20);
+        updateAnxietyMeter();
+      }
       playFlushSound();
       addLog("Relieved yourself in the men's room.", '#a5d6a7');
 
@@ -4025,6 +4315,10 @@ async function init() {
     playerLevel = 1;
     perfectStreak = 0;
     pottyVendingTimer = 0;
+    garlicTickTimer = 0;
+    wristRestUsedInEncounter = false;
+    ownedItems.clear();
+    renderItemsHud();
     typePulse = 0;
     typeWaveAge = -1;
     typoPulse = 0;
@@ -4281,8 +4575,47 @@ async function init() {
       devState.dmg = val;
       updateDevStatus();
       devOutput.textContent = `dmg set to ${devState.dmg}`;
+    } else if (cmd === 'item') {
+      if (!arg || arg === 'list') {
+        const list = ownedItems.size > 0 ? Array.from(ownedItems).join(', ') : 'none';
+        devOutput.textContent = `Items: ${list} (available: garlic, leaky-pen, rubber-stamp)`;
+        return;
+      }
+      if (arg === 'all') {
+        for (const id of Object.keys(PASSIVE_ITEMS)) {
+          ownedItems.add(id);
+        }
+        renderItemsHud();
+        syncFloorPhraseAtlas();
+        devOutput.textContent = 'Added all items';
+        return;
+      }
+      if (arg === 'clear') {
+        ownedItems.clear();
+        renderItemsHud();
+        syncFloorPhraseAtlas();
+        devOutput.textContent = 'Cleared all items';
+        return;
+      }
+      const action = arg === 'add' || arg === 'remove' ? arg : null;
+      const targetArg = action ? parts.slice(2).join(' ') : parts.slice(1).join(' ');
+      const itemId = normalizeItemId(targetArg);
+      if (!itemId) {
+        devOutput.textContent = 'Usage: item <name|all|clear|list>';
+        return;
+      }
+      const shouldAdd = action === 'add' ? true : action === 'remove' ? false : !ownedItems.has(itemId);
+      if (shouldAdd) {
+        ownedItems.add(itemId);
+        devOutput.textContent = `Added ${PASSIVE_ITEMS[itemId].name}`;
+      } else {
+        ownedItems.delete(itemId);
+        devOutput.textContent = `Removed ${PASSIVE_ITEMS[itemId].name}`;
+      }
+      renderItemsHud();
+      syncFloorPhraseAtlas();
     } else if (cmd === 'help') {
-      devOutput.textContent = 'Commands: noclip, god, grid, boss [on|off], dmg <num>';
+      devOutput.textContent = 'Commands: noclip, god, grid, boss [on|off], dmg <num>, item <name|clear|list>';
     } else {
       devOutput.textContent = `Unknown command: ${cmd}`;
     }
@@ -4335,6 +4668,13 @@ async function init() {
       return;
     }
 
+    if (panicAttack.active) {
+      if (!e.repeat && panicAttack.canRestart) {
+        resetGame();
+      }
+      return;
+    }
+
     if (elevatorTransition.active) {
       return;
     }
@@ -4382,7 +4722,7 @@ async function init() {
 
           const doorPlacement = getDoorPlacement(player.gx, player.gz);
           if (doorPlacement && doorPlacement.dx === dx && doorPlacement.dz === dz) {
-            if (doorPlacement.isWomens) {
+            if (doorPlacement.isWomens && !ownedItems.has('sanitation-key-w')) {
               nudge.active = true;
               nudge.t = 0;
               nudge.dx = dx;
@@ -4391,6 +4731,9 @@ async function init() {
               playLockedDoorSound();
               addLog("Locked. That's the women's restroom.", '#ffab91');
               return;
+            }
+            if (doorPlacement.isWomens) {
+              addLog("Unlocked women's restroom with Sanitation Key (W).", '#9be564');
             }
             nudge.active = true;
             nudge.t = 0;
@@ -4545,17 +4888,52 @@ async function init() {
           encounterCorrectChars++;
           perfectStreak++;
           updateComboHud(true);
-          addXp(5);
+          addXp(5, primary);
           updateWpmHud(true);
-          if (primary && primary.alive && primary.hp > 0 && devState.dmg > 0) {
-            const isCrit = Math.random() < 0.15;
-            const dealt = isCrit ? devState.dmg * 3 : devState.dmg;
-            primary.hp = Math.max(0, primary.hp - dealt);
-            if (isCrit) {
-              spawnCritPopupForSlot(primary, inputBuffer.length);
+          if (primary && primary.alive) {
+            let isCritHit = false;
+            const dmg = getEffectiveDamage();
+            if (primary.hp > 0 && dmg > 0) {
+              const isCrit = Math.random() < getCritChance();
+              const dealt = isCrit ? dmg * 3 : dmg;
+              primary.hp = Math.max(0, primary.hp - dealt);
+              if (isCrit) {
+                isCritHit = true;
+                spawnCritPopupForSlot(primary, inputBuffer.length);
+                playCritSound();
+                if (ownedItems.has('leaky-pen')) {
+                  const collateral = Math.max(1, Math.ceil(dealt * 0.5));
+                  for (let j = 0; j < MAX_ENCOUNTER_MEN; j++) {
+                    if (j === primarySpeakerIndex) continue;
+                    const other = encounterSlots[j];
+                    if (other && other.alive && other.hp > 0) {
+                      other.hp = Math.max(0, other.hp - collateral);
+                      other.hitShakeDuration = 0.16;
+                      other.hitShakeTimer = 0.16;
+                      other.hitShakeAmp = 0.05;
+                      other.critFlashDuration = 0.18;
+                      other.critFlashTimer = 0.18;
+                      if (other.hp <= 0) {
+                        defeatEncounterSlot(other);
+                      }
+                    }
+                  }
+                }
+              }
+              if (primary.hp <= 0) {
+                awardPerfectForSlot(primary);
+              }
             }
-            if (primary.hp <= 0) {
-              awardPerfectForSlot(primary);
+            if (isCritHit) {
+              primary.hitShakeDuration = 0.28;
+              primary.hitShakeTimer = 0.28;
+              primary.hitShakeAmp = 0.14;
+              primary.critFlashDuration = 0.22;
+              primary.critFlashTimer = 0.22;
+            } else {
+              primary.hitShakeDuration = 0.09;
+              primary.hitShakeTimer = 0.09;
+              primary.hitShakeAmp = 0.012;
             }
           }
         }
@@ -4566,6 +4944,11 @@ async function init() {
       } else if (awaitingNextPhraseStart || (primary && primary.alive && primary.hp <= 0)) {
         return;
       } else {
+        if (ownedItems.has('ergonomic-wrist-rest') && !wristRestUsedInEncounter) {
+          wristRestUsedInEncounter = true;
+          addLog('Ergonomic Wrist Rest absorbed a typo!', '#80deea');
+          return;
+        }
         typoPulse = 1.0;
         for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
           const slot = encounterSlots[i];
@@ -4592,7 +4975,8 @@ async function init() {
     if (
       (isDead && performance.now() - deathTime > 300) ||
       (bossCatch.active && bossCatch.canRestart) ||
-      (bladderAccident.active && bladderAccident.canRestart)
+      (bladderAccident.active && bladderAccident.canRestart) ||
+      (panicAttack.active && panicAttack.canRestart)
     ) {
       resetGame();
     }
@@ -4668,7 +5052,7 @@ async function init() {
   }
 
   function triggerBossCatch() {
-    if (bossCatch.active || isDead || devState.god || !devState.boss) return;
+    if (bossCatch.active || panicAttack.active || isDead || devState.god || !devState.boss) return;
     bossCatch.active = true;
     bossCatch.timer = 0;
     bossCatch.promptShown = false;
@@ -4700,6 +5084,12 @@ async function init() {
     if (diff < -Math.PI) diff += Math.PI * 2;
     player.targetYaw = player.yaw + diff;
     boss.rumble = Math.max(boss.rumble, 0.055);
+    if (panicHandsEl) {
+      panicHandsEl.style.display = 'block';
+      panicHandsEl.style.opacity = '0';
+      panicHandsEl.style.filter = '';
+      panicHandsEl.style.transform = 'translate3d(-50%, 100%, 0)';
+    }
   }
 
   function renderFrame() {
@@ -4742,8 +5132,11 @@ async function init() {
     updateFloatingPopups(dt);
     updateWpmHud();
 
-    if (!bossCatch.active && !bladderAccident.active && !isDead && !elevatorTransition.active && !devState.god) {
+    if (!bossCatch.active && !bladderAccident.active && !panicAttack.active && !isDead && !elevatorTransition.active && !devState.god) {
       let pottyRate = POTTY_FILL_RATE;
+      if (ownedItems.has('catheter')) {
+        pottyRate *= 0.55;
+      }
       if (pottyVendingTimer > 0) {
         pottyVendingTimer = Math.max(0, pottyVendingTimer - dt);
         pottyRate += POTTY_VENDING_BOOST;
@@ -4789,6 +5182,39 @@ async function init() {
 
       if (bladderAccident.timer >= bladderAccident.duration) {
         bladderAccident.active = false;
+        isDead = true;
+        deathTime = performance.now();
+        anxietyHud.style.transform = '';
+      }
+    }
+
+    if (panicAttack.active) {
+      panicAttack.timer += dt;
+      const pitchLerp = 1 - Math.exp(-5.0 * dt);
+      cameraPitch += (-0.28 - cameraPitch) * pitchLerp;
+      updatePanicHands(panicAttack.timer, elapsed);
+
+      if (!panicAttack.promptShown && panicAttack.timer >= 1.15) {
+        panicAttack.promptShown = true;
+        panicAttack.startSubTyping = startDeathTyping('You had a panic attack...', 65, 24);
+        deathScreen.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+        deathScreen.style.display = 'flex';
+        requestAnimationFrame(() => {
+          if (panicAttack.active || isDead) {
+            deathScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.92)';
+          }
+        });
+      }
+
+      if (!panicAttack.canRestart && panicAttack.timer >= 1.95) {
+        panicAttack.canRestart = true;
+        if (panicAttack.startSubTyping) {
+          panicAttack.startSubTyping();
+        }
+      }
+
+      if (panicAttack.timer >= panicAttack.duration) {
+        panicAttack.active = false;
         isDead = true;
         deathTime = performance.now();
         anxietyHud.style.transform = '';
@@ -4845,6 +5271,9 @@ async function init() {
 
     if (bossCatch.active) {
       bossCatch.timer += dt;
+      const pitchLerp = 1 - Math.exp(-3.5 * dt);
+      cameraPitch += (-0.14 - cameraPitch) * pitchLerp;
+      updatePanicHands(bossCatch.timer, elapsed, 0.2);
       const darkLerp = 1 - Math.exp(-10 * dt);
       playerLight.intensity += (0 - playerLight.intensity) * darkLerp;
       scene.fog.near += (1.2 - scene.fog.near) * darkLerp;
@@ -4853,6 +5282,13 @@ async function init() {
       bossLight.intensity += (6.0 * flicker - bossLight.intensity) * darkLerp;
       bossLight.distance += (6.0 - bossLight.distance) * darkLerp;
       bossMat.emissiveIntensity += (0.85 - bossMat.emissiveIntensity) * darkLerp;
+      if (panicHandsEl) {
+        const redMix = 1 - Math.min(1, playerLight.intensity / 18);
+        const brightness = (1 - redMix * 0.65) * (0.9 + 0.1 * flicker);
+        const sepia = redMix * 0.85;
+        const saturate = 1 + redMix * 2.2;
+        panicHandsEl.style.filter = `brightness(${brightness.toFixed(2)}) sepia(${sepia.toFixed(2)}) hue-rotate(-45deg) saturate(${saturate.toFixed(2)})`;
+      }
 
       if (!bossCatch.promptShown && bossCatch.timer >= 0.45) {
         bossCatch.promptShown = true;
@@ -5001,7 +5437,7 @@ async function init() {
 
     updateWallInstances(player.gx, player.gz);
 
-    if (!isDead && !bossCatch.active && !elevatorTransition.active) {
+    if (!isDead && !bossCatch.active && !bladderAccident.active && !panicAttack.active && !elevatorTransition.active) {
       updateIdleMen(dt);
     }
 
@@ -5263,11 +5699,62 @@ async function init() {
       officeChairPool[ch].visible = false;
     }
 
+    if (
+      inEncounter &&
+      encounterCorrectChars > 0 &&
+      ownedItems.has('garlic') &&
+      !isDead &&
+      !panicAttack.active &&
+      !bladderAccident.active &&
+      !bossCatch.active
+    ) {
+      garlicTickTimer += dt;
+      if (garlicTickTimer >= 0.85) {
+        garlicTickTimer -= 0.85;
+        for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
+          const slot = encounterSlots[i];
+          if (slot && slot.alive && slot.hp > 0) {
+            slot.hp = Math.max(0, slot.hp - 1);
+            slot.corrosiveFlashDuration = 0.16;
+            slot.corrosiveFlashTimer = 0.16;
+            if (slot.hitShakeTimer <= 0 || slot.hitShakeAmp <= 0.012) {
+              slot.hitShakeDuration = 0.09;
+              slot.hitShakeTimer = 0.09;
+              slot.hitShakeAmp = 0.012;
+            }
+            if (slot.hp <= 0) {
+              if (i !== primarySpeakerIndex) {
+                defeatEncounterSlot(slot);
+              } else {
+                awardPerfectForSlot(slot);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      garlicTickTimer = 0;
+    }
+
     let activeCount = 0;
     let revealChanged = false;
     let showDismissPrompt = false;
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       const slot = encounterSlots[i];
+      if (slot.critFlashTimer > 0) {
+        slot.critFlashTimer = Math.max(0, slot.critFlashTimer - dt);
+        const flash = slot.critFlashDuration > 0 ? slot.critFlashTimer / slot.critFlashDuration : 0;
+        slot.mat.color.setRGB(1, 1 - flash * 0.35, 1 - flash * 0.35);
+        slot.mat.emissive.setRGB(flash * 0.3, 0, 0);
+      } else if (slot.corrosiveFlashTimer > 0) {
+        slot.corrosiveFlashTimer = Math.max(0, slot.corrosiveFlashTimer - dt);
+        const flash = slot.corrosiveFlashDuration > 0 ? slot.corrosiveFlashTimer / slot.corrosiveFlashDuration : 0;
+        slot.mat.color.setRGB(1 - flash * 0.16, 1, 1 - flash * 0.16);
+        slot.mat.emissive.setRGB(0, flash * 0.08, 0);
+      } else if (slot.mat.emissive.r !== 0 || slot.mat.emissive.g !== 0 || slot.mat.color.g !== 1 || slot.mat.color.r !== 1) {
+        slot.mat.color.setRGB(1, 1, 1);
+        slot.mat.emissive.setRGB(0, 0, 0);
+      }
       if (!slot.alive) {
         labelDummy.scale.set(0, 0, 0);
         labelDummy.updateMatrix();
@@ -5328,7 +5815,19 @@ async function init() {
       slot.labelY += (slot.targetLabelY - slot.labelY) * rowLerp;
 
       const billboardYaw = Math.atan2(player.x - slot.x, player.z - slot.z);
-      slot.mesh.position.set(slot.x, 0, slot.z);
+      let shakeX = 0;
+      let shakeY = 0;
+      let shakeZ = 0;
+      if (slot.hitShakeTimer > 0) {
+        slot.hitShakeTimer = Math.max(0, slot.hitShakeTimer - dt);
+        const progress = slot.hitShakeDuration > 0 ? slot.hitShakeTimer / slot.hitShakeDuration : 0;
+        const amp = slot.hitShakeAmp * progress;
+        const sideOffset = Math.sin(elapsed * 85 + i * 2.1) * amp;
+        shakeX = Math.cos(billboardYaw) * sideOffset;
+        shakeZ = -Math.sin(billboardYaw) * sideOffset;
+        shakeY = Math.abs(Math.cos(elapsed * 95 + i * 1.3)) * amp * 0.35;
+      }
+      slot.mesh.position.set(slot.x + shakeX, shakeY, slot.z + shakeZ);
       slot.mesh.rotation.set(0, billboardYaw, 0);
 
       pushDropShadow(slot.x, slot.z, slot.opacity);
@@ -5357,8 +5856,21 @@ async function init() {
           healthAlphaArray[i] = 0;
           brokenMaskArray[i] = 1;
           showDismissPrompt = true;
+          if (!dismissPromptSprite.visible || dismissPromptSlotIndex !== i) {
+            dismissPromptAnimAge = 0;
+            dismissPromptSlotIndex = i;
+          } else {
+            dismissPromptAnimAge = Math.min(DISMISS_PROMPT_ANIM_DURATION, dismissPromptAnimAge + dt);
+          }
+          const animT = dismissPromptAnimAge / DISMISS_PROMPT_ANIM_DURATION;
+          const fadeIn = Math.min(1, animT / 0.45);
+          const scaleMult =
+            animT < 0.45
+              ? 0.92 + 0.22 * Math.sin((animT / 0.45) * Math.PI * 0.5)
+              : 1.14 - 0.14 * (1 - Math.pow(1 - (animT - 0.45) / 0.55, 2));
           dismissPromptSprite.position.set(slot.x, MAN_HEIGHT + 0.1, slot.z);
-          dismissPromptMat.opacity = slot.opacity;
+          dismissPromptSprite.scale.set(1.12 * scaleMult, 0.2 * scaleMult, 1);
+          dismissPromptMat.opacity = slot.opacity * fadeIn;
         }
       } else {
         labelDummy.scale.set(0, 0, 0);
@@ -5369,6 +5881,10 @@ async function init() {
         healthAlphaArray[i] = 0;
         brokenMaskArray[i] = 0;
       }
+    }
+    if (!showDismissPrompt) {
+      dismissPromptAnimAge = 0;
+      dismissPromptSlotIndex = -1;
     }
     dismissPromptSprite.visible = showDismissPrompt;
     npcDropShadows.count = dropShadowCount;
