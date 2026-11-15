@@ -1168,7 +1168,7 @@ async function init() {
     }
   }
 
-  function playBuffer(buffer, volume = 1.0, playbackRate = 1.0) {
+  function playBuffer(buffer, volume = 1.0, playbackRate = 1.0, delaySeconds = 0) {
     if (!audioCtx || !buffer) return false;
     const source = audioCtx.createBufferSource();
     source.buffer = buffer;
@@ -1183,7 +1183,7 @@ async function init() {
     }
     activeAudioSources.add(source);
     source.onended = () => activeAudioSources.delete(source);
-    source.start();
+    source.start(delaySeconds > 0 ? audioCtx.currentTime + delaySeconds : 0);
     return true;
   }
 
@@ -1258,11 +1258,16 @@ async function init() {
     playBuffer(buffer, volume);
   }
 
-  function playRandomGreeting(volume = 0.75) {
+  function playRandomGreeting(volume = 0.75, delaySeconds = 0, usedIndices = null) {
     if (greetingBuffers.length === 0) return;
-    const buffer =
-      greetingBuffers[Math.floor(Math.random() * greetingBuffers.length)];
-    playBuffer(buffer, volume);
+    let idx = Math.floor(Math.random() * greetingBuffers.length);
+    if (usedIndices && usedIndices.size < greetingBuffers.length) {
+      while (usedIndices.has(idx)) {
+        idx = Math.floor(Math.random() * greetingBuffers.length);
+      }
+      usedIndices.add(idx);
+    }
+    playBuffer(greetingBuffers[idx], volume, 1.0, delaySeconds);
   }
 
   const playerLight = new THREE.PointLight(0xfff0d8, 18, 25, 1.8);
@@ -1334,6 +1339,44 @@ async function init() {
       scene.add(mesh);
       return mesh;
     });
+
+  function createDropShadowTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(32, 32, 4, 32, 32, 30);
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0.9)');
+    grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.45)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  const dropShadowGeo = new THREE.PlaneGeometry(0.95, 0.95);
+  dropShadowGeo.rotateX(-Math.PI * 0.5);
+  const dropShadowMat = new THREE.MeshBasicMaterial({
+    map: createDropShadowTexture(),
+    transparent: true,
+    opacity: 0.34,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+    fog: true,
+  });
+  const MAX_DROP_SHADOWS = MAX_IDLE_MEN + MAX_ENCOUNTER_MEN + 1 + 32 + 80;
+  const npcDropShadows = new THREE.InstancedMesh(
+    dropShadowGeo,
+    dropShadowMat,
+    MAX_DROP_SHADOWS
+  );
+  npcDropShadows.frustumCulled = false;
+  npcDropShadows.renderOrder = 1;
+  scene.add(npcDropShadows);
 
   const bossTexture = textureLoader.load('/boss.png');
   bossTexture.colorSpace = THREE.SRGBColorSpace;
@@ -2990,7 +3033,12 @@ async function init() {
 
     arrangeEncounterSlots(true);
 
-    playRandomGreeting();
+    const usedGreetingIndices = new Set();
+    let greetingDelay = 0;
+    for (let i = 0; i < count; i++) {
+      playRandomGreeting(i === 0 ? 0.75 : 0.62, greetingDelay, usedGreetingIndices);
+      greetingDelay += 0.07 + Math.random() * 0.13;
+    }
     if (count > 1) {
       playRandomFootstep(0.5);
       playViolinShriek();
@@ -4295,9 +4343,22 @@ async function init() {
     const bossMoveDist = Math.hypot(bossTargetX - boss.x, bossTargetZ - boss.z);
     const bossBounceAmp = Math.min(1, bossMoveDist / 0.35) * 0.14;
     const bossBounceY = Math.abs(Math.sin(elapsed * 20)) * bossBounceAmp;
+    let dropShadowCount = 0;
+    function pushDropShadow(x, z, scale = 1) {
+      if (dropShadowCount >= MAX_DROP_SHADOWS) return;
+      dummy.position.set(x, 0.015, z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(scale, 1, scale);
+      dummy.updateMatrix();
+      npcDropShadows.setMatrixAt(dropShadowCount++, dummy.matrix);
+    }
+
     const bossYaw = Math.atan2(player.x - boss.x, player.z - boss.z);
     bossMesh.position.set(boss.x, bossBounceY, boss.z);
     bossMesh.rotation.set(0, bossYaw, 0);
+    if (bossMesh.visible) {
+      pushDropShadow(boss.x, boss.z, 1.25 * (1 - bossBounceY * 1.4));
+    }
     bossLight.position.set(
       boss.x - Math.sin(bossYaw) * 0.15,
       1.45 + bossBounceY * 0.5,
@@ -4406,6 +4467,7 @@ async function init() {
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
       idleMenMeshes[meshIdx].setMatrixAt(idleCounts[meshIdx]++, dummy.matrix);
+      pushDropShadow(man.x, man.z, 1 - bobY * 1.4);
     }
     for (let s = 0; s < idleMenMeshes.length; s++) {
       idleMenMeshes[s].count = idleCounts[s];
@@ -4547,6 +4609,7 @@ async function init() {
           0
         );
         plm.visible = true;
+        pushDropShadow(plantPlacement.x, plantPlacement.z, 0.85);
       }
     }
     for (let pl = plantCount; pl < plantPool.length; pl++) {
@@ -4601,6 +4664,7 @@ async function init() {
             chm.position.set(chairX, 0, chairZ);
             chm.rotation.set(0, Math.atan2(player.x - chairX, player.z - chairZ), 0);
             chm.visible = true;
+            pushDropShadow(chairX, chairZ, 0.75);
           }
         }
         if (cubicleCount >= cubiclePool.length) break;
@@ -4638,6 +4702,8 @@ async function init() {
           if (slot.opacity <= 0) {
             slot.leaving = false;
             slot.mesh.visible = false;
+          } else {
+            pushDropShadow(slot.x, slot.z, slot.opacity * (1 - bounceY * 1.4));
           }
         }
         continue;
@@ -4674,6 +4740,8 @@ async function init() {
       slot.mesh.position.set(slot.x, 0, slot.z);
       slot.mesh.rotation.set(0, billboardYaw, 0);
 
+      pushDropShadow(slot.x, slot.z, slot.opacity);
+
       if (i === primarySpeakerIndex) {
         labelDummy.position.set(slot.x, slot.labelY, slot.z);
         labelDummy.quaternion.copy(camera.quaternion);
@@ -4684,6 +4752,8 @@ async function init() {
       labelDummy.updateMatrix();
       instancedLabels.setMatrixAt(i, labelDummy.matrix);
     }
+    npcDropShadows.count = dropShadowCount;
+    npcDropShadows.instanceMatrix.needsUpdate = true;
     instancedLabels.instanceMatrix.needsUpdate = true;
     if (revealChanged) {
       revealAttr.needsUpdate = true;
