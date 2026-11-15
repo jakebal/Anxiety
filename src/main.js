@@ -677,7 +677,27 @@ function createFloatingTextTexture(text, { fontSize, fillStyle, width, height })
   return texture;
 }
 
+function applyCustomCursor(src, targetHeight = 64) {
+  const img = new Image();
+  img.onload = () => {
+    const scale = targetHeight / img.height;
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(targetHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, width, height);
+    const style = document.createElement('style');
+    style.textContent = `html, body, * { cursor: url('${canvas.toDataURL('image/png')}') 0 0, auto !important; }`;
+    document.head.appendChild(style);
+  };
+  img.src = src;
+}
+
 async function init() {
+  applyCustomCursor('/pointer.png');
   const font = new FontFace('Abaddon Bold', "url('/Abaddon%20Bold.ttf')");
   await font.load();
   document.fonts.add(font);
@@ -952,6 +972,8 @@ async function init() {
   let violinShriekBuffer = null;
   let perfectBuffer = null;
   let peeingBuffer = null;
+  let sneezeBuffer = null;
+  let laughterBuffer = null;
   let heartbeatAudio = null;
   let vocalAmbienceAudio = null;
   let angryMumbleAudio = null;
@@ -1147,6 +1169,22 @@ async function init() {
       })
       .catch(() => {});
 
+    fetch('/sneeze.mp3')
+      .then((res) => res.arrayBuffer())
+      .then((buf) => audioCtx.decodeAudioData(buf))
+      .then((decoded) => {
+        sneezeBuffer = decoded;
+      })
+      .catch(() => {});
+
+    fetch('/laughter.mp3')
+      .then((res) => res.arrayBuffer())
+      .then((buf) => audioCtx.decodeAudioData(buf))
+      .then((decoded) => {
+        laughterBuffer = decoded;
+      })
+      .catch(() => {});
+
     for (const laughUrl of ['/male-laugh-1.mp3', '/male-laught-2.mp3']) {
       fetch(laughUrl)
         .then((res) => res.arrayBuffer())
@@ -1251,6 +1289,10 @@ async function init() {
     playBuffer(peeingBuffer, volume);
   }
 
+  function playLaughterSound(volume = 0.85) {
+    playBuffer(laughterBuffer, volume);
+  }
+
   function playRandomLaugh(volume = 0.55) {
     if (laughBuffers.length === 0) return;
     const buffer =
@@ -1259,6 +1301,10 @@ async function init() {
   }
 
   function playRandomGreeting(volume = 0.75, delaySeconds = 0, usedIndices = null) {
+    if (sneezeBuffer && Math.random() < 1 / 30) {
+      playBuffer(sneezeBuffer, volume, 1.0, delaySeconds);
+      return;
+    }
     if (greetingBuffers.length === 0) return;
     let idx = Math.floor(Math.random() * greetingBuffers.length);
     if (usedIndices && usedIndices.size < greetingBuffers.length) {
@@ -1298,6 +1344,12 @@ async function init() {
   const man2LeftTexture = loadNpcTexture('/man-left-2.png');
   const man2RightTexture = loadNpcTexture('/man-right-2.png');
 
+  const man3Texture = loadNpcTexture('/man-3.png');
+  const man3ReactTexture = loadNpcTexture('/man-react-3.png');
+  const man3BackTexture = loadNpcTexture('/man-back-3.png');
+  const man3LeftTexture = loadNpcTexture('/man-left-3.png');
+  const man3RightTexture = loadNpcTexture('/man-right-3.png');
+
   const npcVariants = [
     {
       front: manTexture,
@@ -1319,6 +1371,13 @@ async function init() {
       right: man2RightTexture,
       back: man2BackTexture,
       react1: man2ReactTexture,
+    },
+    {
+      front: man3Texture,
+      left: man3LeftTexture,
+      right: man3RightTexture,
+      back: man3BackTexture,
+      react1: man3ReactTexture,
     },
   ];
 
@@ -1504,6 +1563,7 @@ async function init() {
         uMap: { value: floorAtlases[0].texture },
         uTime: { value: 0 },
         uTypePulse: { value: 0 },
+        uTypeWaveAge: { value: -1 },
         uTypoPulse: { value: 0 },
       },
     ]),
@@ -1540,6 +1600,7 @@ async function init() {
       uniform sampler2D uMap;
       uniform float uTime;
       uniform float uTypePulse;
+      uniform float uTypeWaveAge;
       uniform float uTypoPulse;
       varying vec2 vUv;
       varying vec4 vUvRect;
@@ -1580,6 +1641,30 @@ async function init() {
           vec2 cellMin = vUvRect.xy;
           vec2 cellMax = vUvRect.xy + vUvRect.zw;
           sampleUv = clamp(sampleUv + jitter, cellMin, cellMax);
+        } else if (isTyped && uTypeWaveAge >= 0.0 && uTypeWaveAge < 1.2) {
+          float distBehind = 0.0;
+          if (vTypedU.y > 0.0) {
+            if (vLocalV > 0.5) {
+              distBehind = vTypedU.y + max(0.0, vTypedU.x - vLocalU);
+            } else {
+              distBehind = max(0.0, vTypedU.y - vLocalU);
+            }
+          } else {
+            distBehind = max(0.0, vTypedU.x - vLocalU);
+          }
+          float wavePos = uTypeWaveAge * 1.15;
+          float waveDelta = distBehind - wavePos;
+          float waveFade = exp(-uTypeWaveAge * 2.6);
+          float wave = exp(-waveDelta * waveDelta * 22.0) * waveFade * exp(-distBehind * 1.1);
+          if (wave > 0.005) {
+            vec2 waveJitter = vec2(
+              0.0,
+              sin(uTime * 48.0 + distBehind * 26.0)
+            ) * (wave * 0.024) * vUvRect.zw;
+            vec2 cellMin = vUvRect.xy;
+            vec2 cellMax = vUvRect.xy + vUvRect.zw;
+            sampleUv = clamp(sampleUv + waveJitter, cellMin, cellMax);
+          }
         }
         float typoAmount = uTypoPulse * vTypoMask;
         if (typoAmount > 0.01) {
@@ -1816,15 +1901,17 @@ async function init() {
   }
 
   function pickNextManDestination(man) {
-    const canCross = Math.random() < 0.32;
+    const canCross = Math.random() < 0.55;
     if (canCross) {
       const candidates = [];
+      let playerTileCandidate = null;
       for (const [dx, dz] of DIR_VECTORS) {
         if (!canStep(man.gx, man.gz, dx, dz)) continue;
         const nx = man.gx + dx;
         const nz = man.gz + dz;
         if (isCubicleCell(nx, nz)) continue;
-        if (nx === player.gx && nz === player.gz) continue;
+        const isPlayerTile = nx === player.gx && nz === player.gz;
+        if (isPlayerTile && (inEncounter || devState.noclip)) continue;
         if (devState.boss && nx === boss.gx && nz === boss.gz) continue;
         if (
           Math.abs(nx - player.gx) > IDLE_MAN_ACTIVE_RADIUS ||
@@ -1833,10 +1920,16 @@ async function init() {
           continue;
         }
         if (isTileReservedByOtherMan(nx, nz, man)) continue;
+        if (isPlayerTile) {
+          playerTileCandidate = [nx, nz];
+        }
         candidates.push([nx, nz]);
       }
       if (candidates.length > 0) {
-        const [nx, nz] = candidates[Math.floor(Math.random() * candidates.length)];
+        const [nx, nz] =
+          playerTileCandidate && Math.random() < 0.5
+            ? playerTileCandidate
+            : candidates[Math.floor(Math.random() * candidates.length)];
         man.targetGx = nx;
         man.targetGz = nz;
         man.targetX = (nx + 0.5) * CELL_SIZE + (Math.random() * 2 - 1) * IDLE_MAN_TILE_MARGIN;
@@ -1905,6 +1998,7 @@ async function init() {
       }
 
       if (
+        (inEncounter || devState.noclip) &&
         (man.targetGx !== man.gx || man.targetGz !== man.gz) &&
         man.targetGx === player.gx &&
         man.targetGz === player.gz
@@ -1940,6 +2034,31 @@ async function init() {
             nextGx === player.gx &&
             nextGz === player.gz
           ) {
+            if (
+              !inEncounter &&
+              !isDead &&
+              !bossCatch.active &&
+              !elevatorTransition.active &&
+              !bladderAccident.active &&
+              !devState.noclip
+            ) {
+              const approachGx = man.gx;
+              const approachGz = man.gz;
+              const faceDx = approachGx - player.gx;
+              const faceDz = approachGz - player.gz;
+              const faceDir = DIR_VECTORS.findIndex(
+                ([vx, vz]) => vx === faceDx && vz === faceDz
+              );
+              if (faceDir !== -1) {
+                player.dir = faceDir;
+                const lookYaw = faceDir * Math.PI * 0.5;
+                let diff = ((lookYaw - player.yaw + Math.PI) % (Math.PI * 2)) - Math.PI;
+                if (diff < -Math.PI) diff += Math.PI * 2;
+                player.targetYaw = player.yaw + diff;
+              }
+              startEncounter(approachGx, approachGz);
+              return;
+            }
             man.targetGx = man.gx;
             man.targetGz = man.gz;
             man.targetX = (man.gx + 0.5) * CELL_SIZE;
@@ -2060,7 +2179,30 @@ async function init() {
     }
   });
 
-  const doorWallOffset = CELL_SIZE * 0.5 - WALL_THICKNESS * 0.5 - 0.015;
+  const doorWallOffset = CELL_SIZE * 0.5 - WALL_THICKNESS * 0.5 - (BASEBOARD_PROTRUSION * 0.5 + 0.005);
+
+  function isSensibleDoorWall(gx, gz, dx, dz) {
+    const ox = gx + dx;
+    const oz = gz + dz;
+    const ocx = Math.floor(ox / MAZE_CHUNK_SIZE);
+    const ocz = Math.floor(oz / MAZE_CHUNK_SIZE);
+    if (isCubicleChunk(ocx, ocz)) return false;
+
+    const perps = [
+      [-dz, dx],
+      [dz, -dx],
+    ];
+    for (const [px, pz] of perps) {
+      if (
+        canStep(gx, gz, px, pz) &&
+        canStep(gx + px, gz + pz, dx, dz) &&
+        canStep(ox + px, oz + pz, -px, -pz)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   function getDoorPlacement(gx, gz) {
     if (gx === 0 && gz === 0) return null;
@@ -2074,8 +2216,9 @@ async function init() {
     if (hasVWall(gx, gz)) walls.push({ dx: -1, dz: 0, yaw: Math.PI * 0.5 });
     if (hasVWall(gx + 1, gz)) walls.push({ dx: 1, dz: 0, yaw: -Math.PI * 0.5 });
 
-    if (walls.length === 0) return null;
-    const choice = walls[Math.floor(hash2D(gx, gz, (worldSeed + 911) | 0) * walls.length)];
+    const sensibleWalls = walls.filter((w) => isSensibleDoorWall(gx, gz, w.dx, w.dz));
+    if (sensibleWalls.length === 0) return null;
+    const choice = sensibleWalls[Math.floor(hash2D(gx, gz, (worldSeed + 911) | 0) * sensibleWalls.length)];
     const isWomens = hash2D(gx, gz, (worldSeed + 887) | 0) < 0.5;
     return {
       x: (gx + 0.5) * CELL_SIZE + choice.dx * doorWallOffset,
@@ -2153,7 +2296,7 @@ async function init() {
     doorPool.push(group);
   }
 
-  const elevatorWallOffset = CELL_SIZE * 0.5 - WALL_THICKNESS * 0.5 - 0.015;
+  const elevatorWallOffset = CELL_SIZE * 0.5 - WALL_THICKNESS * 0.5 - (BASEBOARD_PROTRUSION * 0.5 + 0.005);
   let arrivalElevator = null;
 
   function getElevatorPlacement(gx, gz) {
@@ -2169,8 +2312,9 @@ async function init() {
     if (hasVWall(gx, gz)) walls.push({ dx: -1, dz: 0, yaw: Math.PI * 0.5 });
     if (hasVWall(gx + 1, gz)) walls.push({ dx: 1, dz: 0, yaw: -Math.PI * 0.5 });
 
-    if (walls.length === 0) return null;
-    const choice = walls[Math.floor(hash2D(gx, gz, (worldSeed + 2143) | 0) * walls.length)];
+    const sensibleWalls = walls.filter((w) => isSensibleDoorWall(gx, gz, w.dx, w.dz));
+    if (sensibleWalls.length === 0) return null;
+    const choice = sensibleWalls[Math.floor(hash2D(gx, gz, (worldSeed + 2143) | 0) * sensibleWalls.length)];
     return {
       x: (gx + 0.5) * CELL_SIZE + choice.dx * elevatorWallOffset,
       z: (gz + 0.5) * CELL_SIZE + choice.dz * elevatorWallOffset,
@@ -2217,6 +2361,37 @@ async function init() {
   const elevatorButtonHeight = elevatorButtonWidth * (165 / 72);
   const elevatorButtonGeo = new THREE.PlaneGeometry(elevatorButtonWidth, elevatorButtonHeight);
 
+  function createOutOfServiceTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#f5e15b';
+    ctx.fillRect(0, 0, 256, 128);
+    ctx.strokeStyle = '#1b1b1b';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, 246, 118);
+    ctx.fillStyle = '#b71c1c';
+    ctx.font = 'bold 34px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('OUT OF', 128, 44);
+    ctx.fillText('SERVICE', 128, 86);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
+
+  const outOfServiceMat = new THREE.MeshStandardMaterial({
+    map: createOutOfServiceTexture(),
+    roughness: 0.6,
+    metalness: 0.05,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  const outOfServiceGeo = new THREE.PlaneGeometry(0.76, 0.38);
+
   for (let i = 0; i < MAX_ELEVATOR_INSTANCES; i++) {
     const group = new THREE.Group();
     const doorsMesh = new THREE.Mesh(elevatorGeo, elevatorMat);
@@ -2226,6 +2401,12 @@ async function init() {
     const buttonMesh = new THREE.Mesh(elevatorButtonGeo, elevatorButtonMat);
     buttonMesh.position.set(elevatorWidth * 0.5 + 0.22, 1.35, 0.002);
     group.add(buttonMesh);
+
+    const outOfServiceMesh = new THREE.Mesh(outOfServiceGeo, outOfServiceMat);
+    outOfServiceMesh.position.set(0, 1.5, 0.008);
+    outOfServiceMesh.visible = false;
+    group.add(outOfServiceMesh);
+    group.userData.outOfServiceMesh = outOfServiceMesh;
 
     group.visible = false;
     scene.add(group);
@@ -2605,6 +2786,7 @@ async function init() {
   let isDead = false;
   let deathTime = 0;
   let typePulse = 0;
+  let typeWaveAge = -1;
   let typoPulse = 0;
   let inputBuffer = '';
 
@@ -3154,6 +3336,7 @@ async function init() {
     active: false,
     timer: 0,
     duration: 3.0,
+    laughterPlayed: false,
     promptShown: false,
     canRestart: false,
     startSubTyping: null,
@@ -3163,6 +3346,7 @@ async function init() {
     if (bladderAccident.active || bossCatch.active || isDead || devState.god) return;
     bladderAccident.active = true;
     bladderAccident.timer = 0;
+    bladderAccident.laughterPlayed = false;
     bladderAccident.promptShown = false;
     bladderAccident.canRestart = false;
     bladderAccident.startSubTyping = null;
@@ -3347,6 +3531,7 @@ async function init() {
     bossCatch.startSubTyping = null;
     bladderAccident.active = false;
     bladderAccident.timer = 0;
+    bladderAccident.laughterPlayed = false;
     bladderAccident.promptShown = false;
     bladderAccident.canRestart = false;
     bladderAccident.startSubTyping = null;
@@ -3396,7 +3581,7 @@ async function init() {
     waterCoolerShake.active = false;
     waterCoolerShake.t = 0;
 
-    // Pick a direction facing out into an open corridor, ideally with a wall behind for the elevator
+    // Pick a direction facing out into an open corridor, and ensure a wall behind for the out-of-service elevator
     let spawnDir = 0;
     let foundWithBackWall = false;
     for (let d = 0; d < 4; d++) {
@@ -3416,23 +3601,28 @@ async function init() {
 
     const backDir = (spawnDir + 2) % 4;
     const [bdx, bdz] = DIR_VECTORS[backDir];
-    if (!canStep(0, 0, bdx, bdz)) {
-      const wallYawMap = {
-        '0,-1': 0,
-        '0,1': Math.PI,
-        '-1,0': Math.PI * 0.5,
-        '1,0': -Math.PI * 0.5,
-      };
-      arrivalElevator = {
-        x: 0.5 * CELL_SIZE + bdx * elevatorWallOffset,
-        z: 0.5 * CELL_SIZE + bdz * elevatorWallOffset,
-        yaw: wallYawMap[`${bdx},${bdz}`],
-        dx: bdx,
-        dz: bdz,
-      };
-    } else {
-      arrivalElevator = null;
+    if (canStep(0, 0, bdx, bdz)) {
+      const chunk00 = getMazeChunk(0, 0);
+      if (bdx === 0 && bdz === -1) chunk00[0] |= 1;
+      else if (bdx === -1 && bdz === 0) chunk00[0] |= 2;
+      else if (bdx === 0 && bdz === 1) chunk00[MAZE_CHUNK_SIZE] |= 1;
+      else if (bdx === 1 && bdz === 0) chunk00[1] |= 2;
     }
+
+    const wallYawMap = {
+      '0,-1': 0,
+      '0,1': Math.PI,
+      '-1,0': Math.PI * 0.5,
+      '1,0': -Math.PI * 0.5,
+    };
+    arrivalElevator = {
+      x: 0.5 * CELL_SIZE + bdx * elevatorWallOffset,
+      z: 0.5 * CELL_SIZE + bdz * elevatorWallOffset,
+      yaw: wallYawMap[`${bdx},${bdz}`],
+      dx: bdx,
+      dz: bdz,
+      outOfService: true,
+    };
 
     player.gx = 0;
     player.gz = 0;
@@ -3483,6 +3673,38 @@ async function init() {
     elevatorTransition.timers.push(t1);
   }
 
+  function triggerMensBathroomTransition() {
+    if (elevatorTransition.active || isDead || bossCatch.active || bladderAccident.active) return;
+    elevatorTransition.active = true;
+    if (fadeOverlay) {
+      fadeOverlay.style.opacity = '1';
+    }
+
+    const t1 = setTimeout(() => {
+      potty = 0;
+      pottyVendingTimer = 0;
+      updatePottyMeter();
+      playFlushSound();
+      addLog("Relieved yourself in the men's room.", '#a5d6a7');
+
+      player.dir = (player.dir + 2) % 4;
+      player.yaw = player.dir * Math.PI * 0.5;
+      player.targetYaw = player.yaw;
+      nudge.active = false;
+      nudge.t = 0;
+
+      if (fadeOverlay) {
+        fadeOverlay.style.opacity = '0';
+      }
+      const t2 = setTimeout(() => {
+        elevatorTransition.active = false;
+        elevatorTransition.timers.length = 0;
+      }, 620);
+      elevatorTransition.timers.push(t2);
+    }, 650);
+    elevatorTransition.timers.push(t1);
+  }
+
   function resetGame() {
     floorLevel = 1;
     syncFloorPhraseAtlas();
@@ -3497,6 +3719,7 @@ async function init() {
     perfectStreak = 0;
     pottyVendingTimer = 0;
     typePulse = 0;
+    typeWaveAge = -1;
     typoPulse = 0;
     inputBuffer = '';
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
@@ -3856,11 +4079,7 @@ async function init() {
             nudge.dx = dx;
             nudge.dz = dz;
             nudge.distance = 0.32;
-            potty = 0;
-            pottyVendingTimer = 0;
-            updatePottyMeter();
-            playFlushSound();
-            addLog("Relieved yourself in the men's room.", '#a5d6a7');
+            triggerMensBathroomTransition();
             return;
           }
 
@@ -3886,6 +4105,16 @@ async function init() {
 
           const elevatorPlacement = getElevatorPlacement(player.gx, player.gz);
           if (elevatorPlacement && elevatorPlacement.dx === dx && elevatorPlacement.dz === dz) {
+            if (elevatorPlacement.outOfService) {
+              nudge.active = true;
+              nudge.t = 0;
+              nudge.dx = dx;
+              nudge.dz = dz;
+              nudge.distance = 0.16;
+              playLockedDoorSound();
+              addLog('The elevator is out of service.', '#ffab91');
+              return;
+            }
             nudge.active = true;
             nudge.t = 0;
             nudge.dx = dx;
@@ -3968,6 +4197,7 @@ async function init() {
       if (matched) {
         inputBuffer = candidate;
         typePulse = 1.0;
+        typeWaveAge = 0;
         let gainedNewLetterXp = false;
         const primary = getPrimarySpeakerSlot();
         if (
@@ -4156,10 +4386,15 @@ async function init() {
 
     typePulse *= Math.exp(-12 * dt);
     if (typePulse < 0.005) typePulse = 0;
+    if (typeWaveAge >= 0) {
+      typeWaveAge += dt;
+      if (typeWaveAge >= 1.2) typeWaveAge = -1;
+    }
     typoPulse *= Math.exp(-12 * dt);
     if (typoPulse < 0.005) typoPulse = 0;
     labelMat.uniforms.uTime.value = elapsed;
     labelMat.uniforms.uTypePulse.value = typePulse;
+    labelMat.uniforms.uTypeWaveAge.value = typeWaveAge;
     labelMat.uniforms.uTypoPulse.value = typoPulse;
     updateFloatingPopups(dt);
     updateWpmHud();
@@ -4183,6 +4418,11 @@ async function init() {
       cameraPitch += (-1.02 - cameraPitch) * pitchLerp;
       const puddleFade = Math.min(1, Math.max(0, (bladderAccident.timer - 0.15) / 1.35));
       peePuddleMat.opacity = puddleFade * 0.95;
+
+      if (!bladderAccident.laughterPlayed && bladderAccident.timer >= 0.75) {
+        bladderAccident.laughterPlayed = true;
+        playLaughterSound();
+      }
 
       if (!bladderAccident.promptShown && bladderAccident.timer >= 1.55) {
         bladderAccident.promptShown = true;
@@ -4552,6 +4792,9 @@ async function init() {
         const elm = elevatorPool[elevatorCount++];
         elm.position.set(elPlacement.x, 0, elPlacement.z);
         elm.rotation.set(0, elPlacement.yaw, 0);
+        if (elm.userData.outOfServiceMesh) {
+          elm.userData.outOfServiceMesh.visible = Boolean(elPlacement.outOfService);
+        }
         elm.visible = true;
       }
     }
