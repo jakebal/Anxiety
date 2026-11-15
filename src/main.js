@@ -971,6 +971,7 @@ async function init() {
   let deepBassBuffer = null;
   let violinShriekBuffer = null;
   let perfectBuffer = null;
+  let byeBuffer = null;
   let peeingBuffer = null;
   let sneezeBuffer = null;
   let laughterBuffer = null;
@@ -1161,6 +1162,14 @@ async function init() {
       })
       .catch(() => {});
 
+    fetch('/bye.mp3')
+      .then((res) => res.arrayBuffer())
+      .then((buf) => audioCtx.decodeAudioData(buf))
+      .then((decoded) => {
+        byeBuffer = decoded;
+      })
+      .catch(() => {});
+
     fetch('/peeing.mp3')
       .then((res) => res.arrayBuffer())
       .then((buf) => audioCtx.decodeAudioData(buf))
@@ -1283,6 +1292,11 @@ async function init() {
 
   function playPerfectSound(volume = 0.8) {
     playBuffer(perfectBuffer, volume);
+  }
+
+  function playByeSound(volume = 0.85) {
+    const pitch = 0.88 + Math.random() * 0.24;
+    playBuffer(byeBuffer, volume, pitch);
   }
 
   function playPeeingSound(volume = 0.85) {
@@ -1518,7 +1532,10 @@ async function init() {
       leaveVx: 0,
       leaveVz: 0,
       hadError: false,
+      perfectAwarded: false,
       maxTypedLen: 0,
+      hp: 0,
+      maxHp: 1,
     };
   });
 
@@ -1555,6 +1572,7 @@ async function init() {
   const prevTypedUArray = new Float32Array(MAX_ENCOUNTER_MEN * 2);
   const revealArray = new Float32Array(MAX_ENCOUNTER_MEN);
   const typoMaskArray = new Float32Array(MAX_ENCOUNTER_MEN);
+  const brokenMaskArray = new Float32Array(MAX_ENCOUNTER_MEN);
 
   const labelMat = new THREE.ShaderMaterial({
     uniforms: THREE.UniformsUtils.merge([
@@ -1573,6 +1591,7 @@ async function init() {
       attribute vec2 aPrevTypedU;
       attribute float aReveal;
       attribute float aTypoMask;
+      attribute float aBrokenMask;
       varying vec2 vUv;
       varying vec4 vUvRect;
       varying float vLocalU;
@@ -1581,6 +1600,7 @@ async function init() {
       varying vec2 vPrevTypedU;
       varying float vReveal;
       varying float vTypoMask;
+      varying float vBrokenMask;
       #include <fog_pars_vertex>
       void main() {
         vUv = aUvRect.xy + uv * aUvRect.zw;
@@ -1591,6 +1611,7 @@ async function init() {
         vPrevTypedU = aPrevTypedU;
         vReveal = aReveal;
         vTypoMask = aTypoMask;
+        vBrokenMask = aBrokenMask;
         vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mvPosition;
         #include <fog_vertex>
@@ -1610,6 +1631,7 @@ async function init() {
       varying vec2 vPrevTypedU;
       varying float vReveal;
       varying float vTypoMask;
+      varying float vBrokenMask;
       #include <fog_pars_fragment>
       void main() {
         float lineTypedU = (vLocalV > 0.5) ? vTypedU.x : vTypedU.y;
@@ -1681,6 +1703,10 @@ async function init() {
         if (texel.a < 0.1) discard;
         if (isTyped) {
           texel.rgb *= vec3(1.0, 0.85, 0.2);
+        } else if (vBrokenMask > 0.5) {
+          float lum = dot(texel.rgb, vec3(0.299, 0.587, 0.114));
+          texel.rgb = mix(vec3(lum * 0.45), vec3(0.45, 0.45, 0.48), 0.5);
+          texel.a *= 0.82;
         }
         if (typoAmount > 0.01) {
           texel.rgb = mix(texel.rgb, vec3(1.0, 0.18, 0.18), min(1.0, typoAmount * 1.15));
@@ -1700,11 +1726,13 @@ async function init() {
   const prevTypedUAttr = new THREE.InstancedBufferAttribute(prevTypedUArray, 2);
   const revealAttr = new THREE.InstancedBufferAttribute(revealArray, 1);
   const typoMaskAttr = new THREE.InstancedBufferAttribute(typoMaskArray, 1);
+  const brokenMaskAttr = new THREE.InstancedBufferAttribute(brokenMaskArray, 1);
   labelGeo.setAttribute('aUvRect', uvRectAttr);
   labelGeo.setAttribute('aTypedU', typedUAttr);
   labelGeo.setAttribute('aPrevTypedU', prevTypedUAttr);
   labelGeo.setAttribute('aReveal', revealAttr);
   labelGeo.setAttribute('aTypoMask', typoMaskAttr);
+  labelGeo.setAttribute('aBrokenMask', brokenMaskAttr);
 
   const instancedLabels = new THREE.InstancedMesh(
     labelGeo,
@@ -1714,6 +1742,161 @@ async function init() {
   instancedLabels.frustumCulled = false;
   instancedLabels.renderOrder = 10;
   labelScene.add(instancedLabels);
+
+  const healthBarGeo = new THREE.PlaneGeometry(0.92, 0.1);
+  const healthRatioArray = new Float32Array(MAX_ENCOUNTER_MEN);
+  const healthAlphaArray = new Float32Array(MAX_ENCOUNTER_MEN);
+  const healthBarMat = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {}]),
+    vertexShader: `
+      attribute float aHealthRatio;
+      attribute float aBarAlpha;
+      varying vec2 vLocalUv;
+      varying float vHealthRatio;
+      varying float vBarAlpha;
+      #include <fog_pars_vertex>
+      void main() {
+        vLocalUv = uv;
+        vHealthRatio = aHealthRatio;
+        vBarAlpha = aBarAlpha;
+        vec4 mvPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }
+    `,
+    fragmentShader: `
+      varying vec2 vLocalUv;
+      varying float vHealthRatio;
+      varying float vBarAlpha;
+      #include <fog_pars_fragment>
+      void main() {
+        bool isBorder =
+          vLocalUv.x < 0.03 ||
+          vLocalUv.x > 0.97 ||
+          vLocalUv.y < 0.16 ||
+          vLocalUv.y > 0.84;
+        vec4 outColor;
+        if (isBorder) {
+          outColor = vec4(0.06, 0.06, 0.08, 0.92 * vBarAlpha);
+        } else {
+          float innerU = (vLocalUv.x - 0.03) / 0.94;
+          if (innerU <= vHealthRatio) {
+            vec3 lowCol = vec3(0.96, 0.24, 0.24);
+            vec3 midCol = vec3(1.0, 0.82, 0.22);
+            vec3 highCol = vec3(0.32, 0.92, 0.42);
+            vec3 fillCol = vHealthRatio < 0.5
+              ? mix(lowCol, midCol, vHealthRatio * 2.0)
+              : mix(midCol, highCol, (vHealthRatio - 0.5) * 2.0);
+            outColor = vec4(fillCol, 0.95 * vBarAlpha);
+          } else {
+            outColor = vec4(0.14, 0.14, 0.18, 0.78 * vBarAlpha);
+          }
+        }
+        if (outColor.a < 0.02) discard;
+        gl_FragColor = outColor;
+        #include <fog_fragment>
+      }
+    `,
+    fog: true,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+
+  const healthRatioAttr = new THREE.InstancedBufferAttribute(healthRatioArray, 1);
+  const healthAlphaAttr = new THREE.InstancedBufferAttribute(healthAlphaArray, 1);
+  healthBarGeo.setAttribute('aHealthRatio', healthRatioAttr);
+  healthBarGeo.setAttribute('aBarAlpha', healthAlphaAttr);
+
+  const instancedHealthBars = new THREE.InstancedMesh(
+    healthBarGeo,
+    healthBarMat,
+    MAX_ENCOUNTER_MEN
+  );
+  instancedHealthBars.frustumCulled = false;
+  instancedHealthBars.renderOrder = 9;
+  labelScene.add(instancedHealthBars);
+
+  function createDismissPromptTexture() {
+    const width = 360;
+    const height = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.font = '32px "Abaddon Bold", sans-serif';
+    const label = 'to dismiss';
+    const textWidth = ctx.measureText(label).width;
+    const iconWidth = 46;
+    const iconHeight = 32;
+    const gap = 14;
+    const totalWidth = iconWidth + gap + textWidth;
+    const startX = (width - totalWidth) * 0.5;
+    const midY = height * 0.5;
+
+    // Draw vector Enter keycap icon
+    const boxX = startX;
+    const boxY = midY - iconHeight * 0.5;
+    const r = 6;
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, iconWidth, iconHeight, r);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+    ctx.stroke();
+    ctx.fillStyle = '#e8eaed';
+    ctx.fill();
+
+    // Inner return arrow (down then left with arrowhead)
+    const arrowRight = boxX + iconWidth - 11;
+    const arrowTop = midY - 6;
+    const arrowBottom = midY + 4;
+    const arrowLeft = boxX + 12;
+    ctx.beginPath();
+    ctx.moveTo(arrowRight, arrowTop);
+    ctx.lineTo(arrowRight, arrowBottom);
+    ctx.lineTo(arrowLeft, arrowBottom);
+    ctx.moveTo(arrowLeft + 6, arrowBottom - 5);
+    ctx.lineTo(arrowLeft, arrowBottom);
+    ctx.lineTo(arrowLeft + 6, arrowBottom + 5);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3.2;
+    ctx.strokeStyle = '#1a1a1e';
+    ctx.stroke();
+
+    // Draw centered "to dismiss" text
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+    ctx.strokeText(label, startX + iconWidth + gap, midY + 1);
+    ctx.fillStyle = '#e8eaed';
+    ctx.fillText(label, startX + iconWidth + gap, midY + 1);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    return texture;
+  }
+
+  const dismissPromptMat = new THREE.SpriteMaterial({
+    map: createDismissPromptTexture(),
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    opacity: 1,
+  });
+  const dismissPromptSprite = new THREE.Sprite(dismissPromptMat);
+  dismissPromptSprite.scale.set(1.12, 0.2, 1);
+  dismissPromptSprite.renderOrder = 10;
+  dismissPromptSprite.visible = false;
+  labelScene.add(dismissPromptSprite);
 
   const LABEL_WIDTH = 1.65;
   const LABEL_HEIGHT = 0.42;
@@ -1728,6 +1911,12 @@ async function init() {
     fillStyle: '#7cffb2',
     width: 320,
     height: 80,
+  });
+  const critPopupTexture = createFloatingTextTexture('CRIT!', {
+    fontSize: 40,
+    fillStyle: '#ff6b4a',
+    width: 180,
+    height: 72,
   });
 
   function createPopupPool(texture, count, baseScaleX, baseScaleY, renderOrder) {
@@ -1762,6 +1951,7 @@ async function init() {
 
   const xpPopupPool = createPopupPool(xpPopupTexture, 24, 0.28, 0.112, 20);
   const perfectPopupPool = createPopupPool(perfectPopupTexture, 6, 0.72, 0.18, 21);
+  const critPopupPool = createPopupPool(critPopupTexture, 12, 0.44, 0.176, 22);
   const popupLocalOffset = new THREE.Vector3();
 
   function acquirePopup(pool) {
@@ -1795,6 +1985,38 @@ async function init() {
     p.mat.opacity = 1;
     p.sprite.position.set(p.startX, p.startY, p.startZ);
     p.sprite.scale.set(p.baseScaleX * 0.5, p.baseScaleY * 0.5, 1);
+    p.sprite.visible = true;
+  }
+
+  function spawnCritPopupForSlot(slot, charIndex) {
+    const { charCenterUV } = getCurrentFloorAtlas();
+    const centers = charCenterUV[slot.phraseIndex];
+    let x = slot.x;
+    let y = MAN_HEIGHT + 0.22;
+    let z = slot.z;
+    if (centers && charIndex >= 1 && charIndex * 2 + 1 < centers.length) {
+      const cu = centers[charIndex * 2 + 0];
+      const cv = centers[charIndex * 2 + 1];
+      const localX = (cu - 0.5) * LABEL_WIDTH;
+      const localY = (cv - 0.5) * LABEL_HEIGHT + 0.22;
+      popupLocalOffset.set(localX, localY, 0).applyQuaternion(camera.quaternion);
+      x = slot.x + popupLocalOffset.x;
+      y = slot.labelY + popupLocalOffset.y;
+      z = slot.z + popupLocalOffset.z;
+    }
+
+    const p = acquirePopup(critPopupPool);
+    p.active = true;
+    p.age = 0;
+    p.duration = 0.52;
+    p.startX = x;
+    p.startY = y;
+    p.startZ = z;
+    p.rise = 0.26;
+    p.vx = (Math.random() - 0.5) * 0.08;
+    p.mat.opacity = 1;
+    p.sprite.position.set(p.startX, p.startY, p.startZ);
+    p.sprite.scale.set(p.baseScaleX * 0.55, p.baseScaleY * 0.55, 1);
     p.sprite.visible = true;
   }
 
@@ -1846,10 +2068,11 @@ async function init() {
   function updateFloatingPopups(dt) {
     updatePopupPool(xpPopupPool, dt);
     updatePopupPool(perfectPopupPool, dt);
+    updatePopupPool(critPopupPool, dt);
   }
 
   function clearFloatingPopups() {
-    for (const pool of [xpPopupPool, perfectPopupPool]) {
+    for (const pool of [xpPopupPool, perfectPopupPool, critPopupPool]) {
       for (let i = 0; i < pool.length; i++) {
         pool[i].active = false;
         pool[i].sprite.visible = false;
@@ -3043,6 +3266,7 @@ async function init() {
   let encounterForwardX = 0;
   let encounterForwardZ = 1;
   let primarySpeakerIndex = -1;
+  let awaitingNextPhraseStart = false;
 
   function getPrimarySpeakerSlot() {
     if (
@@ -3097,7 +3321,7 @@ async function init() {
     const primaryDepth = count > 1 ? 0.18 : 0;
     primarySlot.targetX = encounterCenterX + encounterForwardX * primaryDepth;
     primarySlot.targetZ = encounterCenterZ + encounterForwardZ * primaryDepth;
-    primarySlot.targetLabelY = MAN_HEIGHT + 0.3;
+    primarySlot.targetLabelY = MAN_HEIGHT + 0.4;
     if (snapLabelY) {
       primarySlot.labelY = primarySlot.targetLabelY;
     }
@@ -3110,7 +3334,7 @@ async function init() {
         encounterCenterX + encounterRx * lateralOffset + encounterForwardX * depthOffset;
       slot.targetZ =
         encounterCenterZ + encounterRz * lateralOffset + encounterForwardZ * depthOffset;
-      slot.targetLabelY = MAN_HEIGHT + 0.3;
+      slot.targetLabelY = MAN_HEIGHT + 0.4;
       if (snapLabelY) {
         slot.labelY = slot.targetLabelY;
       }
@@ -3131,6 +3355,7 @@ async function init() {
       clearedCells.add(man.spawnKey);
     }
     inputBuffer = '';
+    awaitingNextPhraseStart = false;
 
     const roll = Math.random();
     let count = 1;
@@ -3176,6 +3401,7 @@ async function init() {
       slot.alive = true;
       slot.leaving = false;
       slot.hadError = false;
+      slot.perfectAwarded = false;
       slot.maxTypedLen = 0;
       slot.laughTimer = 0;
       slot.reveal = 0;
@@ -3188,6 +3414,9 @@ async function init() {
       slot.mat.needsUpdate = true;
       slot.phraseIndex = phraseIndex;
       slot.phrase = phrases[phraseIndex];
+      const nonSpaceLen = slot.phrase.replace(/\s+/g, '').length;
+      slot.maxHp = Math.max(8, Math.ceil(nonSpaceLen * 0.75));
+      slot.hp = slot.maxHp;
 
       if (i === 0) {
         slot.x = startX;
@@ -3239,28 +3468,31 @@ async function init() {
     return Boolean(primary && primary.alive && primary.phrase.startsWith(prefix));
   }
 
-  function checkAndClearEncounterMatch(typed) {
-    const primary = getPrimarySpeakerSlot();
-    if (!primary || !primary.alive || primary.phrase !== typed) {
-      return false;
-    }
+  function awardPerfectForSlot(slot) {
+    if (!slot || slot.hadError || slot.perfectAwarded) return;
+    slot.perfectAwarded = true;
+    spawnPerfectPopup(slot.x, slot.labelY + 0.18, slot.z);
+    playPerfectSound();
+    addXp(25);
+  }
 
-    primary.alive = false;
-    primary.leaving = true;
-    primary.leaveStepTimer = 0;
-    primary.laughTimer = 0;
-    primary.mat.map = npcVariants[primary.variant].back;
-    primary.mat.needsUpdate = true;
-    const dx = primary.x - player.x;
-    const dz = primary.z - player.z;
+  function defeatEncounterSlot(slot) {
+    if (!slot || !slot.alive) return false;
+
+    slot.alive = false;
+    slot.hp = 0;
+    slot.leaving = true;
+    slot.leaveStepTimer = 0;
+    slot.laughTimer = 0;
+    slot.mat.map = npcVariants[slot.variant].back;
+    slot.mat.needsUpdate = true;
+    const dx = slot.x - player.x;
+    const dz = slot.z - player.z;
     const dist = Math.hypot(dx, dz) || 1;
-    primary.leaveVx = (dx / dist) * 2.2;
-    primary.leaveVz = (dz / dist) * 2.2;
-    if (!primary.hadError) {
-      spawnPerfectPopup(primary.x, primary.labelY + 0.18, primary.z);
-      playPerfectSound();
-      addXp(25);
-    }
+    slot.leaveVx = (dx / dist) * 2.2;
+    slot.leaveVz = (dz / dist) * 2.2;
+    playByeSound();
+    awardPerfectForSlot(slot);
 
     let remaining = 0;
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
@@ -3270,16 +3502,26 @@ async function init() {
     if (remaining === 0) {
       inEncounter = false;
       primarySpeakerIndex = -1;
+      awaitingNextPhraseStart = false;
       inputBuffer = '';
       updateWpmHud(true);
       addLog('Escaped the conversation.', '#9be564');
     } else {
       primarySpeakerIndex = -1;
+      awaitingNextPhraseStart = true;
       ensurePrimarySpeaker(true);
       arrangeEncounterSlots(false);
       addLog('Brushed off a coworker.', '#c8e6c9');
     }
     return true;
+  }
+
+  function checkAndClearEncounterMatch(typed) {
+    const primary = getPrimarySpeakerSlot();
+    if (!primary || !primary.alive || primary.phrase !== typed) {
+      return false;
+    }
+    return defeatEncounterSlot(primary);
   }
 
   const nudge = {
@@ -3570,6 +3812,7 @@ async function init() {
     syncFloorPhraseAtlas();
     inEncounter = false;
     inputBuffer = '';
+    awaitingNextPhraseStart = false;
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
     mazeChunks.clear();
     clearedCells.clear();
@@ -3722,6 +3965,7 @@ async function init() {
     typeWaveAge = -1;
     typoPulse = 0;
     inputBuffer = '';
+    awaitingNextPhraseStart = false;
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
     mazeChunks.clear();
     clearedCells.clear();
@@ -3806,6 +4050,7 @@ async function init() {
     god: false,
     grid: false,
     boss: true,
+    dmg: 1,
   };
 
   const DEBUG_GRID_DIVISIONS = WALL_VIEW_RADIUS * 2 + 1;
@@ -3875,7 +4120,7 @@ async function init() {
   devPrompt.style.color = '#80deea';
   const devInput = document.createElement('input');
   devInput.type = 'text';
-  devInput.placeholder = 'noclip, god, grid, boss [on|off]';
+  devInput.placeholder = 'noclip, god, grid, boss [on|off], dmg <num>';
   devInput.style.cssText = [
     'flex:1',
     'background:transparent',
@@ -3896,7 +4141,7 @@ async function init() {
   document.body.appendChild(devMenu);
 
   function updateDevStatus() {
-    devStatus.textContent = `noclip: ${devState.noclip ? 'ON' : 'OFF'}  |  god: ${devState.god ? 'ON' : 'OFF'}  |  grid: ${devState.grid ? 'ON' : 'OFF'}  |  boss: ${devState.boss ? 'ON' : 'OFF'}`;
+    devStatus.textContent = `noclip: ${devState.noclip ? 'ON' : 'OFF'}  |  god: ${devState.god ? 'ON' : 'OFF'}  |  grid: ${devState.grid ? 'ON' : 'OFF'}  |  boss: ${devState.boss ? 'ON' : 'OFF'}  |  dmg: ${devState.dmg}`;
   }
   updateDevStatus();
 
@@ -3963,8 +4208,17 @@ async function init() {
       }
       updateDevStatus();
       devOutput.textContent = `boss ${devState.boss ? 'ON' : 'OFF'}`;
+    } else if (cmd === 'dmg') {
+      const val = Number(arg);
+      if (!arg || !Number.isFinite(val) || val < 0) {
+        devOutput.textContent = `Usage: dmg <num> (current: ${devState.dmg})`;
+        return;
+      }
+      devState.dmg = val;
+      updateDevStatus();
+      devOutput.textContent = `dmg set to ${devState.dmg}`;
     } else if (cmd === 'help') {
-      devOutput.textContent = 'Commands: noclip, god, grid, boss [on|off]';
+      devOutput.textContent = 'Commands: noclip, god, grid, boss [on|off], dmg <num>';
     } else {
       devOutput.textContent = `Unknown command: ${cmd}`;
     }
@@ -4171,6 +4425,18 @@ async function init() {
       return;
     }
 
+    if (e.code === 'Enter') {
+      e.preventDefault();
+      const primary = getPrimarySpeakerSlot();
+      if (primary && primary.alive && primary.hp <= 0) {
+        playRandomKeySound();
+        defeatEncounterSlot(primary);
+        inputBuffer = '';
+        updateTypedHighlights();
+      }
+      return;
+    }
+
     if (e.code === 'Space') {
       e.preventDefault();
       return;
@@ -4194,12 +4460,13 @@ async function init() {
         }
       }
 
+      const primary = getPrimarySpeakerSlot();
       if (matched) {
+        awaitingNextPhraseStart = false;
         inputBuffer = candidate;
         typePulse = 1.0;
         typeWaveAge = 0;
         let gainedNewLetterXp = false;
-        const primary = getPrimarySpeakerSlot();
         if (
           primary &&
           primary.alive &&
@@ -4216,14 +4483,26 @@ async function init() {
           updateComboHud(true);
           addXp(5);
           updateWpmHud(true);
+          if (primary && primary.alive && primary.hp > 0 && devState.dmg > 0) {
+            const isCrit = Math.random() < 0.15;
+            const dealt = isCrit ? devState.dmg * 3 : devState.dmg;
+            primary.hp = Math.max(0, primary.hp - dealt);
+            if (isCrit) {
+              spawnCritPopupForSlot(primary, inputBuffer.length);
+            }
+            if (primary.hp <= 0) {
+              awardPerfectForSlot(primary);
+            }
+          }
         }
         if (checkAndClearEncounterMatch(inputBuffer)) {
           inputBuffer = '';
         }
         updateTypedHighlights();
+      } else if (awaitingNextPhraseStart || (primary && primary.alive && primary.hp <= 0)) {
+        return;
       } else {
         typoPulse = 1.0;
-        const primary = getPrimarySpeakerSlot();
         for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
           const slot = encounterSlots[i];
           const isCandidate =
@@ -4922,12 +5201,17 @@ async function init() {
 
     let activeCount = 0;
     let revealChanged = false;
+    let showDismissPrompt = false;
     for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
       const slot = encounterSlots[i];
       if (!slot.alive) {
         labelDummy.scale.set(0, 0, 0);
         labelDummy.updateMatrix();
         instancedLabels.setMatrixAt(i, labelDummy.matrix);
+        instancedHealthBars.setMatrixAt(i, labelDummy.matrix);
+        healthRatioArray[i] = 0;
+        healthAlphaArray[i] = 0;
+        brokenMaskArray[i] = 0;
         if (slot.leaving) {
           slot.opacity = Math.max(0, slot.opacity - dt * 1.4);
           slot.mat.opacity = slot.opacity;
@@ -4989,15 +5273,47 @@ async function init() {
         labelDummy.position.set(slot.x, slot.labelY, slot.z);
         labelDummy.quaternion.copy(camera.quaternion);
         labelDummy.scale.set(1, 1, 1);
+        labelDummy.updateMatrix();
+        instancedLabels.setMatrixAt(i, labelDummy.matrix);
+
+        if (slot.hp > 0) {
+          labelDummy.position.set(slot.x, MAN_HEIGHT + 0.1, slot.z);
+          labelDummy.quaternion.copy(camera.quaternion);
+          labelDummy.scale.set(1, 1, 1);
+          labelDummy.updateMatrix();
+          instancedHealthBars.setMatrixAt(i, labelDummy.matrix);
+          healthRatioArray[i] = slot.maxHp > 0 ? Math.max(0, Math.min(1, slot.hp / slot.maxHp)) : 0;
+          healthAlphaArray[i] = slot.opacity;
+          brokenMaskArray[i] = 0;
+        } else {
+          labelDummy.scale.set(0, 0, 0);
+          labelDummy.updateMatrix();
+          instancedHealthBars.setMatrixAt(i, labelDummy.matrix);
+          healthRatioArray[i] = 0;
+          healthAlphaArray[i] = 0;
+          brokenMaskArray[i] = 1;
+          showDismissPrompt = true;
+          dismissPromptSprite.position.set(slot.x, MAN_HEIGHT + 0.1, slot.z);
+          dismissPromptMat.opacity = slot.opacity;
+        }
       } else {
         labelDummy.scale.set(0, 0, 0);
+        labelDummy.updateMatrix();
+        instancedLabels.setMatrixAt(i, labelDummy.matrix);
+        instancedHealthBars.setMatrixAt(i, labelDummy.matrix);
+        healthRatioArray[i] = 0;
+        healthAlphaArray[i] = 0;
+        brokenMaskArray[i] = 0;
       }
-      labelDummy.updateMatrix();
-      instancedLabels.setMatrixAt(i, labelDummy.matrix);
     }
+    dismissPromptSprite.visible = showDismissPrompt;
     npcDropShadows.count = dropShadowCount;
     npcDropShadows.instanceMatrix.needsUpdate = true;
     instancedLabels.instanceMatrix.needsUpdate = true;
+    instancedHealthBars.instanceMatrix.needsUpdate = true;
+    healthRatioAttr.needsUpdate = true;
+    healthAlphaAttr.needsUpdate = true;
+    brokenMaskAttr.needsUpdate = true;
     if (revealChanged) {
       revealAttr.needsUpdate = true;
     }
