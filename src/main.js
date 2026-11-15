@@ -1743,7 +1743,7 @@ async function init() {
   instancedLabels.renderOrder = 10;
   labelScene.add(instancedLabels);
 
-  const healthBarGeo = new THREE.PlaneGeometry(0.92, 0.1);
+  const healthBarGeo = new THREE.PlaneGeometry(0.98, 0.14);
   const healthRatioArray = new Float32Array(MAX_ENCOUNTER_MEN);
   const healthAlphaArray = new Float32Array(MAX_ENCOUNTER_MEN);
   const healthBarMat = new THREE.ShaderMaterial({
@@ -1770,26 +1770,46 @@ async function init() {
       varying float vBarAlpha;
       #include <fog_pars_fragment>
       void main() {
-        bool isBorder =
-          vLocalUv.x < 0.03 ||
-          vLocalUv.x > 0.97 ||
-          vLocalUv.y < 0.16 ||
-          vLocalUv.y > 0.84;
+        float x = vLocalUv.x;
+        float y = vLocalUv.y;
+
+        // Battery body: x in [0.02, 0.91], y in [0.10, 0.90]
+        // Battery terminal nub: x in [0.91, 0.97], y in [0.30, 0.70]
+        bool inBody = x >= 0.02 && x <= 0.91 && y >= 0.10 && y <= 0.90;
+        bool inNub = x > 0.91 && x <= 0.97 && y >= 0.30 && y <= 0.70;
+        if (!inBody && !inNub) discard;
+
         vec4 outColor;
-        if (isBorder) {
-          outColor = vec4(0.06, 0.06, 0.08, 0.92 * vBarAlpha);
+        if (inNub) {
+          bool nubBorder = x > 0.955 || y < 0.36 || y > 0.64;
+          outColor = nubBorder
+            ? vec4(0.08, 0.08, 0.10, 0.94 * vBarAlpha)
+            : vec4(0.76, 0.80, 0.86, 0.95 * vBarAlpha);
         } else {
-          float innerU = (vLocalUv.x - 0.03) / 0.94;
-          if (innerU <= vHealthRatio) {
-            vec3 lowCol = vec3(0.96, 0.24, 0.24);
-            vec3 midCol = vec3(1.0, 0.82, 0.22);
-            vec3 highCol = vec3(0.32, 0.92, 0.42);
-            vec3 fillCol = vHealthRatio < 0.5
-              ? mix(lowCol, midCol, vHealthRatio * 2.0)
-              : mix(midCol, highCol, (vHealthRatio - 0.5) * 2.0);
-            outColor = vec4(fillCol, 0.95 * vBarAlpha);
+          bool outerOutline = x < 0.038 || x > 0.892 || y < 0.18 || y > 0.82;
+          bool casing = x < 0.052 || x > 0.878 || y < 0.24 || y > 0.76;
+          if (outerOutline) {
+            outColor = vec4(0.06, 0.06, 0.08, 0.95 * vBarAlpha);
+          } else if (casing) {
+            outColor = vec4(0.62, 0.66, 0.72, 0.95 * vBarAlpha);
           } else {
-            outColor = vec4(0.14, 0.14, 0.18, 0.78 * vBarAlpha);
+            float innerU = (x - 0.052) / (0.878 - 0.052);
+            // 4 subtle battery segment dividers
+            float segPos = fract(innerU * 4.0);
+            bool isDivider = innerU > 0.03 && innerU < 0.97 && (segPos < 0.045 || segPos > 0.955);
+            if (isDivider) {
+              outColor = vec4(0.10, 0.10, 0.13, 0.85 * vBarAlpha);
+            } else if (innerU <= vHealthRatio) {
+              vec3 lowCol = vec3(0.96, 0.24, 0.24);
+              vec3 midCol = vec3(1.0, 0.82, 0.22);
+              vec3 highCol = vec3(0.32, 0.92, 0.42);
+              vec3 fillCol = vHealthRatio < 0.5
+                ? mix(lowCol, midCol, vHealthRatio * 2.0)
+                : mix(midCol, highCol, (vHealthRatio - 0.5) * 2.0);
+              outColor = vec4(fillCol, 0.96 * vBarAlpha);
+            } else {
+              outColor = vec4(0.14, 0.14, 0.18, 0.80 * vBarAlpha);
+            }
           }
         }
         if (outColor.a < 0.02) discard;
@@ -3423,8 +3443,8 @@ async function init() {
         slot.z = startZ;
         slot.opacity = 1;
       } else {
-        slot.x = startX + encounterRx * offset * 1.4;
-        slot.z = startZ + encounterRz * offset * 1.4;
+        slot.x = startX - encounterForwardX * 0.35;
+        slot.z = startZ - encounterForwardZ * 0.35;
         slot.opacity = 0;
       }
 
@@ -3516,10 +3536,54 @@ async function init() {
     return true;
   }
 
+  function assignNewPhraseToSlot(slotIndex) {
+    const slot = encounterSlots[slotIndex];
+    if (!slot || !slot.alive) return;
+
+    const phrases = getCurrentFloorPhrases();
+    const { cols, rows } = getCurrentFloorAtlas();
+    const usedByOthers = new Set();
+    for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
+      if (encounterSlots[i].alive) {
+        usedByOthers.add(encounterSlots[i].phraseIndex);
+      }
+    }
+
+    let phraseIndex = Math.floor(Math.random() * phrases.length);
+    if (usedByOthers.size < phrases.length) {
+      while (usedByOthers.has(phraseIndex)) {
+        phraseIndex = Math.floor(Math.random() * phrases.length);
+      }
+    }
+
+    slot.phraseIndex = phraseIndex;
+    slot.phrase = phrases[phraseIndex];
+    slot.maxTypedLen = 0;
+    slot.reveal = 0;
+    revealArray[slotIndex] = 0;
+    revealAttr.needsUpdate = true;
+
+    const col = phraseIndex % cols;
+    const row = Math.floor(phraseIndex / cols);
+    const uW = 1 / cols;
+    const vH = 1 / rows;
+    uvRects[slotIndex * 4 + 0] = col * uW;
+    uvRects[slotIndex * 4 + 1] = 1 - (row + 1) * vH;
+    uvRects[slotIndex * 4 + 2] = uW;
+    uvRects[slotIndex * 4 + 3] = vH;
+    uvRectAttr.needsUpdate = true;
+  }
+
   function checkAndClearEncounterMatch(typed) {
     const primary = getPrimarySpeakerSlot();
     if (!primary || !primary.alive || primary.phrase !== typed) {
       return false;
+    }
+    if (primary.hp > 0) {
+      assignNewPhraseToSlot(primarySpeakerIndex);
+      awaitingNextPhraseStart = true;
+      playRandomGreeting(0.6);
+      return true;
     }
     return defeatEncounterSlot(primary);
   }
@@ -4050,7 +4114,7 @@ async function init() {
     god: false,
     grid: false,
     boss: true,
-    dmg: 1,
+    dmg: 0.55,
   };
 
   const DEBUG_GRID_DIVISIONS = WALL_VIEW_RADIUS * 2 + 1;
