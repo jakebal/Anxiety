@@ -1227,26 +1227,60 @@ async function init() {
   playerLight.position.set(0, EYE_HEIGHT + 0.25, 0);
   scene.add(playerLight);
 
-  const manTexture = textureLoader.load('/man.png');
-  manTexture.colorSpace = THREE.SRGBColorSpace;
+  function loadNpcTexture(path) {
+    const tex = textureLoader.load(path);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
 
-  const manReact1Texture = textureLoader.load('/man-react-1.png');
-  manReact1Texture.colorSpace = THREE.SRGBColorSpace;
+  const manTexture = loadNpcTexture('/man.png');
+  const manReact1Texture = loadNpcTexture('/man-react-1.png');
+  const manBackTexture = loadNpcTexture('/man-back.png');
+  const manLeftTexture = loadNpcTexture('/man-left.png');
+  const manRightTexture = loadNpcTexture('/man-right.png');
 
-  const manBackTexture = textureLoader.load('/man-back.png');
-  manBackTexture.colorSpace = THREE.SRGBColorSpace;
+  const womanTexture = loadNpcTexture('/woman.png');
+  const womanReact1Texture = loadNpcTexture('/woman-react-1.png');
+  const womanBackTexture = loadNpcTexture('/woman-back.png');
+  const womanLeftTexture = loadNpcTexture('/woman-left.png');
+  const womanRightTexture = loadNpcTexture('/woman-right.png');
 
-  const manLeftTexture = textureLoader.load('/man-left.png');
-  manLeftTexture.colorSpace = THREE.SRGBColorSpace;
+  const man2Texture = loadNpcTexture('/man-2.png');
+  const man2ReactTexture = loadNpcTexture('/man-react-2.png');
+  const man2BackTexture = loadNpcTexture('/man-back-2.png');
+  const man2LeftTexture = loadNpcTexture('/man-left-2.png');
+  const man2RightTexture = loadNpcTexture('/man-right-2.png');
 
-  const manRightTexture = textureLoader.load('/man-right.png');
-  manRightTexture.colorSpace = THREE.SRGBColorSpace;
+  const npcVariants = [
+    {
+      front: manTexture,
+      left: manLeftTexture,
+      right: manRightTexture,
+      back: manBackTexture,
+      react1: manReact1Texture,
+    },
+    {
+      front: womanTexture,
+      left: womanLeftTexture,
+      right: womanRightTexture,
+      back: womanBackTexture,
+      react1: womanReact1Texture,
+    },
+    {
+      front: man2Texture,
+      left: man2LeftTexture,
+      right: man2RightTexture,
+      back: man2BackTexture,
+      react1: man2ReactTexture,
+    },
+  ];
 
   const manGeo = new THREE.PlaneGeometry(MAN_WIDTH, MAN_HEIGHT);
   manGeo.translate(0, MAN_HEIGHT * 0.5, 0);
 
-  const idleMenMeshes = [manTexture, manLeftTexture, manRightTexture, manBackTexture].map(
-    (tex) => {
+  const idleMenMeshes = npcVariants
+    .flatMap((v) => [v.front, v.left, v.right, v.back])
+    .map((tex) => {
       const mat = new THREE.MeshStandardMaterial({
         map: tex,
         alphaTest: 0.35,
@@ -1257,8 +1291,7 @@ async function init() {
       mesh.frustumCulled = false;
       scene.add(mesh);
       return mesh;
-    }
-  );
+    });
 
   const bossTexture = textureLoader.load('/boss.png');
   bossTexture.colorSpace = THREE.SRGBColorSpace;
@@ -1323,6 +1356,7 @@ async function init() {
     return {
       mesh,
       mat,
+      variant: 0,
       alive: false,
       phraseIndex: 0,
       phrase: '',
@@ -1769,6 +1803,7 @@ async function init() {
           speed: IDLE_MAN_MIN_SPEED + Math.random() * (IDLE_MAN_MAX_SPEED - IDLE_MAN_MIN_SPEED),
           bobPhase: Math.random() * Math.PI * 2,
           bobAmp: 0,
+          variant: Math.floor(Math.random() * npcVariants.length),
           cleared: false,
         });
       }
@@ -2819,7 +2854,11 @@ async function init() {
       slot.laughTimer = 0;
       slot.reveal = 0;
       revealArray[i] = 0;
-      slot.mat.map = manTexture;
+      slot.variant =
+        i === 0 && man
+          ? man.variant
+          : Math.floor(Math.random() * npcVariants.length);
+      slot.mat.map = npcVariants[slot.variant].front;
       slot.mat.needsUpdate = true;
       slot.phraseIndex = phraseIndex;
       slot.phrase = phrases[phraseIndex];
@@ -2886,7 +2925,7 @@ async function init() {
         slot.leaving = true;
         slot.leaveStepTimer = 0;
         slot.laughTimer = 0;
-        slot.mat.map = manBackTexture;
+        slot.mat.map = npcVariants[slot.variant].back;
         slot.mat.needsUpdate = true;
         const dx = slot.x - player.x;
         const dz = slot.z - player.z;
@@ -3264,6 +3303,7 @@ async function init() {
       encounterSlots[i].alive = false;
       encounterSlots[i].leaving = false;
       encounterSlots[i].laughTimer = 0;
+      encounterSlots[i].variant = 0;
       encounterSlots[i].mat.map = manTexture;
       encounterSlots[i].mesh.visible = false;
     }
@@ -3341,6 +3381,7 @@ async function init() {
       encounterSlots[i].alive = false;
       encounterSlots[i].leaving = false;
       encounterSlots[i].laughTimer = 0;
+      encounterSlots[i].variant = 0;
       encounterSlots[i].mat.map = manTexture;
       encounterSlots[i].mesh.visible = false;
     }
@@ -3387,7 +3428,7 @@ async function init() {
     playRandomLaugh();
     const chosen = aliveSlots[Math.floor(Math.random() * aliveSlots.length)];
     chosen.laughTimer = 0.85;
-    chosen.mat.map = manReact1Texture;
+    chosen.mat.map = npcVariants[chosen.variant].react1;
     chosen.mat.needsUpdate = true;
   }
 
@@ -4213,7 +4254,7 @@ async function init() {
       updateIdleMen(dt);
     }
 
-    const idleCounts = [0, 0, 0, 0];
+    const idleCounts = new Array(idleMenMeshes.length).fill(0);
     for (let i = 0; i < idleMen.length; i++) {
       const man = idleMen[i];
       if (man.cleared) continue;
@@ -4249,14 +4290,15 @@ async function init() {
         }
       }
 
-      if (idleCounts[spriteIdx] >= MAX_IDLE_MEN) continue;
+      const meshIdx = (man.variant || 0) * 4 + spriteIdx;
+      if (idleCounts[meshIdx] >= MAX_IDLE_MEN) continue;
       const billboardYaw = Math.atan2(player.x - man.x, player.z - man.z);
       const bobY = Math.abs(Math.sin(elapsed * 5.5 + man.bobPhase)) * 0.032 * man.bobAmp;
       dummy.position.set(man.x, bobY, man.z);
       dummy.rotation.set(0, billboardYaw, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
-      idleMenMeshes[spriteIdx].setMatrixAt(idleCounts[spriteIdx]++, dummy.matrix);
+      idleMenMeshes[meshIdx].setMatrixAt(idleCounts[meshIdx]++, dummy.matrix);
     }
     for (let s = 0; s < idleMenMeshes.length; s++) {
       idleMenMeshes[s].count = idleCounts[s];
@@ -4508,8 +4550,9 @@ async function init() {
         slot.laughTimer -= dt;
         if (slot.laughTimer <= 0) {
           slot.laughTimer = 0;
-          if (slot.mat.map !== manTexture) {
-            slot.mat.map = manTexture;
+          const frontTex = npcVariants[slot.variant].front;
+          if (slot.mat.map !== frontTex) {
+            slot.mat.map = frontTex;
             slot.mat.needsUpdate = true;
           }
         }
