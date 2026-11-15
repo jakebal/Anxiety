@@ -3237,10 +3237,23 @@ async function init() {
     return 0.04 + (ownedItems.has('rubber-stamp') ? 0.1 : 0);
   }
 
+  function setWpmTimerPaused(paused) {
+    if (paused) {
+      if (wpmPauseStartTime === 0) {
+        wpmPauseStartTime = performance.now();
+      }
+    } else if (wpmPauseStartTime > 0) {
+      encounterPausedWpmMs += performance.now() - wpmPauseStartTime;
+      wpmPauseStartTime = 0;
+    }
+  }
+
   function getCurrentWpm() {
     if (!inEncounter || isDead || encounterCorrectChars <= 0) return 0;
-    const elapsedMinutes = Math.max((performance.now() - encounterStartTime) / 60000, 1 / 60);
-    return Math.round((encounterCorrectChars / 5) / elapsedMinutes);
+    const now = performance.now();
+    const pausedNow = wpmPauseStartTime > 0 ? now - wpmPauseStartTime : 0;
+    const activeMs = Math.max(1000, now - encounterStartTime - encounterPausedWpmMs - pausedNow);
+    return Math.round((encounterCorrectChars / 5) / (activeMs / 60000));
   }
 
   function getEffectiveDamage() {
@@ -3378,6 +3391,8 @@ async function init() {
   let comboPopTimer = null;
   let encounterStartTime = 0;
   let encounterCorrectChars = 0;
+  let encounterPausedWpmMs = 0;
+  let wpmPauseStartTime = 0;
   let lastWpmUpdateTime = 0;
 
   function updateWpmHud(force = false) {
@@ -3392,9 +3407,7 @@ async function init() {
       wpmValueEl.textContent = '0';
       return;
     }
-    const elapsedMinutes = Math.max((now - encounterStartTime) / 60000, 1 / 60);
-    const wpm = Math.round((encounterCorrectChars / 5) / elapsedMinutes);
-    wpmValueEl.textContent = String(wpm);
+    wpmValueEl.textContent = String(getCurrentWpm());
   }
 
   function updateComboHud(pop = false) {
@@ -3492,6 +3505,43 @@ async function init() {
   let encounterForwardZ = 1;
   let primarySpeakerIndex = -1;
   let awaitingNextPhraseStart = false;
+  const autoFinish = {
+    active: false,
+    slotIndex: -1,
+    charAccum: 0,
+    soundCooldown: 0,
+    charsPerSec: 120,
+  };
+
+  function resetAutoFinish() {
+    autoFinish.active = false;
+    autoFinish.slotIndex = -1;
+    autoFinish.charAccum = 0;
+    autoFinish.soundCooldown = 0;
+  }
+
+  function startAutoFinishForPrimary() {
+    const primary = getPrimarySpeakerSlot();
+    if (!primary || !primary.alive || primary.hp > 0) return;
+    if (autoFinish.active && autoFinish.slotIndex === primarySpeakerIndex) return;
+    if (!primary.phrase.startsWith(inputBuffer)) {
+      inputBuffer = '';
+    }
+    const remainingChars = primary.phrase.length - inputBuffer.length;
+    if (remainingChars <= 0) {
+      resetAutoFinish();
+      defeatEncounterSlot(primary);
+      inputBuffer = '';
+      updateTypedHighlights();
+      return;
+    }
+    const wpm = getCurrentWpm();
+    autoFinish.active = true;
+    autoFinish.slotIndex = primarySpeakerIndex;
+    autoFinish.charAccum = 0;
+    autoFinish.soundCooldown = 0;
+    autoFinish.charsPerSec = Math.max(45, 35 + ((wpm * 5) / 60) * 2);
+  }
 
   function getPrimarySpeakerSlot() {
     if (
@@ -3570,6 +3620,8 @@ async function init() {
     inEncounter = true;
     encounterStartTime = performance.now();
     encounterCorrectChars = 0;
+    encounterPausedWpmMs = 0;
+    wpmPauseStartTime = 0;
     wristRestUsedInEncounter = false;
     lastWpmUpdateTime = 0;
     updateWpmHud(true);
@@ -3582,6 +3634,7 @@ async function init() {
     }
     inputBuffer = '';
     awaitingNextPhraseStart = false;
+    resetAutoFinish();
 
     const roll = Math.random();
     let count = 1;
@@ -3743,14 +3796,17 @@ async function init() {
       inEncounter = false;
       primarySpeakerIndex = -1;
       awaitingNextPhraseStart = false;
+      resetAutoFinish();
       inputBuffer = '';
       updateWpmHud(true);
       addLog('Escaped the conversation.', '#9be564');
     } else if (wasPrimary) {
       primarySpeakerIndex = -1;
       awaitingNextPhraseStart = true;
+      resetAutoFinish();
       ensurePrimarySpeaker(true);
       arrangeEncounterSlots(false);
+      setWpmTimerPaused(false);
       addLog('Brushed off a coworker.', '#c8e6c9');
     } else {
       arrangeEncounterSlots(false);
@@ -4162,6 +4218,7 @@ async function init() {
     inEncounter = false;
     inputBuffer = '';
     awaitingNextPhraseStart = false;
+    resetAutoFinish();
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
     mazeChunks.clear();
     clearedCells.clear();
@@ -4324,6 +4381,7 @@ async function init() {
     typoPulse = 0;
     inputBuffer = '';
     awaitingNextPhraseStart = false;
+    resetAutoFinish();
     worldSeed = (Math.random() * 0xffffffff) >>> 0;
     mazeChunks.clear();
     clearedCells.clear();
@@ -4826,6 +4884,7 @@ async function init() {
 
     if (e.code === 'Backspace') {
       e.preventDefault();
+      if (autoFinish.active) return;
       playRandomKeySound();
       inputBuffer = '';
       updateTypedHighlights();
@@ -4837,9 +4896,14 @@ async function init() {
       const primary = getPrimarySpeakerSlot();
       if (primary && primary.alive && primary.hp <= 0) {
         playRandomKeySound();
-        defeatEncounterSlot(primary);
-        inputBuffer = '';
-        updateTypedHighlights();
+        if (!autoFinish.active) {
+          startAutoFinishForPrimary();
+        } else {
+          resetAutoFinish();
+          defeatEncounterSlot(primary);
+          inputBuffer = '';
+          updateTypedHighlights();
+        }
       }
       return;
     }
@@ -4922,6 +4986,7 @@ async function init() {
               }
               if (primary.hp <= 0) {
                 awardPerfectForSlot(primary);
+                setWpmTimerPaused(true);
               }
             }
             if (isCritHit) {
@@ -5727,6 +5792,7 @@ async function init() {
                 defeatEncounterSlot(slot);
               } else {
                 awardPerfectForSlot(slot);
+                setWpmTimerPaused(true);
               }
             }
           }
@@ -5734,6 +5800,51 @@ async function init() {
       }
     } else {
       garlicTickTimer = 0;
+    }
+
+    if (
+      inEncounter &&
+      !isDead &&
+      !panicAttack.active &&
+      !bladderAccident.active &&
+      !bossCatch.active
+    ) {
+      const primary = getPrimarySpeakerSlot();
+      setWpmTimerPaused(autoFinish.active || !primary || !primary.alive || primary.hp <= 0);
+      if (autoFinish.active) {
+        if (
+          !primary ||
+          !primary.alive ||
+          primary.hp > 0 ||
+          primarySpeakerIndex !== autoFinish.slotIndex
+        ) {
+          resetAutoFinish();
+        } else {
+          autoFinish.soundCooldown = Math.max(0, autoFinish.soundCooldown - dt);
+          autoFinish.charAccum += autoFinish.charsPerSec * dt;
+          const step = Math.floor(autoFinish.charAccum);
+          if (step > 0) {
+            autoFinish.charAccum -= step;
+            const nextLen = Math.min(primary.phrase.length, inputBuffer.length + step);
+            inputBuffer = primary.phrase.slice(0, nextLen);
+            typePulse = 1.0;
+            typeWaveAge = 0;
+            updateTypedHighlights();
+            if (autoFinish.soundCooldown <= 0) {
+              playRandomKeySound();
+              autoFinish.soundCooldown = 0.06;
+            }
+            if (nextLen >= primary.phrase.length) {
+              resetAutoFinish();
+              defeatEncounterSlot(primary);
+              inputBuffer = '';
+              updateTypedHighlights();
+            }
+          }
+        }
+      }
+    } else if (autoFinish.active) {
+      resetAutoFinish();
     }
 
     let activeCount = 0;
@@ -5855,7 +5966,9 @@ async function init() {
           healthRatioArray[i] = 0;
           healthAlphaArray[i] = 0;
           brokenMaskArray[i] = 1;
-          showDismissPrompt = true;
+          if (!autoFinish.active) {
+            showDismissPrompt = true;
+          }
           if (!dismissPromptSprite.visible || dismissPromptSlotIndex !== i) {
             dismissPromptAnimAge = 0;
             dismissPromptSlotIndex = i;
@@ -5898,7 +6011,7 @@ async function init() {
       revealAttr.needsUpdate = true;
     }
 
-    if (inEncounter && activeCount > 0) {
+    if (inEncounter && activeCount > 0 && !autoFinish.active) {
       addAnxiety(getFloorEncounterAnxietyRate() * dt);
     }
 
