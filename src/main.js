@@ -553,6 +553,7 @@ function createPhraseAtlasTexture(phrases) {
   ctx.lineJoin = 'round';
 
   const charEndUV = [];
+  const charCenterUV = [];
 
   for (let i = 0; i < phrases.length; i++) {
     const phrase = phrases[i];
@@ -576,14 +577,19 @@ function createPhraseAtlasTexture(phrases) {
     }
 
     const ends = new Float32Array((phrase.length + 1) * 2);
+    const centers = new Float32Array((phrase.length + 1) * 2);
     const fullW1 = ctx.measureText(line1).width;
     const startX1 = (cellW - fullW1) * 0.5;
 
     if (!line2) {
       for (let k = 1; k <= phrase.length; k++) {
-        const u = (startX1 + ctx.measureText(line1.slice(0, k)).width) / cellW;
+        const prevW = ctx.measureText(line1.slice(0, k - 1)).width;
+        const nextW = ctx.measureText(line1.slice(0, k)).width;
+        const u = (startX1 + nextW) / cellW;
         ends[k * 2 + 0] = u;
         ends[k * 2 + 1] = u;
+        centers[k * 2 + 0] = (startX1 + (prevW + nextW) * 0.5) / cellW;
+        centers[k * 2 + 1] = 0.5;
       }
 
       const cy = cellY + cellH * 0.5;
@@ -599,16 +605,26 @@ function createPhraseAtlasTexture(phrases) {
 
       for (let k = 1; k <= phrase.length; k++) {
         if (k <= splitIdx) {
-          ends[k * 2 + 0] =
-            (startX1 + ctx.measureText(line1.slice(0, k)).width) / cellW;
+          const prevW = ctx.measureText(line1.slice(0, k - 1)).width;
+          const nextW = ctx.measureText(line1.slice(0, k)).width;
+          ends[k * 2 + 0] = (startX1 + nextW) / cellW;
           ends[k * 2 + 1] = 0;
+          centers[k * 2 + 0] = (startX1 + (prevW + nextW) * 0.5) / cellW;
+          centers[k * 2 + 1] = 0.7;
         } else {
           ends[k * 2 + 0] = line1FullU;
           const k2 = k - splitIdx - 1;
-          ends[k * 2 + 1] =
-            k2 > 0
-              ? (startX2 + ctx.measureText(line2.slice(0, k2)).width) / cellW
-              : 0;
+          if (k2 > 0) {
+            const prevW = ctx.measureText(line2.slice(0, k2 - 1)).width;
+            const nextW = ctx.measureText(line2.slice(0, k2)).width;
+            ends[k * 2 + 1] = (startX2 + nextW) / cellW;
+            centers[k * 2 + 0] = (startX2 + (prevW + nextW) * 0.5) / cellW;
+            centers[k * 2 + 1] = 0.3;
+          } else {
+            ends[k * 2 + 1] = 0;
+            centers[k * 2 + 0] = line1FullU;
+            centers[k * 2 + 1] = 0.7;
+          }
         }
       }
 
@@ -624,6 +640,7 @@ function createPhraseAtlasTexture(phrases) {
     }
 
     charEndUV.push(ends);
+    charCenterUV.push(centers);
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -632,7 +649,32 @@ function createPhraseAtlasTexture(phrases) {
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
 
-  return { texture, cols, rows, charEndUV };
+  return { texture, cols, rows, charEndUV, charCenterUV };
+}
+
+function createFloatingTextTexture(text, { fontSize, fillStyle, width, height }) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.font = `${fontSize}px "Abaddon Bold", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+  ctx.strokeText(text, width * 0.5, height * 0.5);
+  ctx.fillStyle = fillStyle;
+  ctx.fillText(text, width * 0.5, height * 0.5);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
 }
 
 async function init() {
@@ -866,6 +908,8 @@ async function init() {
   let runningAwayBuffer = null;
   let deepBassBuffer = null;
   let violinShriekBuffer = null;
+  let perfectBuffer = null;
+  let peeingBuffer = null;
   let heartbeatAudio = null;
   let vocalAmbienceAudio = null;
   let angryMumbleAudio = null;
@@ -1045,6 +1089,22 @@ async function init() {
       })
       .catch(() => {});
 
+    fetch('/perfect.mp3')
+      .then((res) => res.arrayBuffer())
+      .then((buf) => audioCtx.decodeAudioData(buf))
+      .then((decoded) => {
+        perfectBuffer = decoded;
+      })
+      .catch(() => {});
+
+    fetch('/peeing.mp3')
+      .then((res) => res.arrayBuffer())
+      .then((buf) => audioCtx.decodeAudioData(buf))
+      .then((decoded) => {
+        peeingBuffer = decoded;
+      })
+      .catch(() => {});
+
     for (const laughUrl of ['/male-laugh-1.mp3', '/male-laught-2.mp3']) {
       fetch(laughUrl)
         .then((res) => res.arrayBuffer())
@@ -1141,6 +1201,14 @@ async function init() {
     playBuffer(violinShriekBuffer, volume);
   }
 
+  function playPerfectSound(volume = 0.8) {
+    playBuffer(perfectBuffer, volume);
+  }
+
+  function playPeeingSound(volume = 0.85) {
+    playBuffer(peeingBuffer, volume);
+  }
+
   function playRandomLaugh(volume = 0.55) {
     if (laughBuffers.length === 0) return;
     const buffer =
@@ -1194,6 +1262,26 @@ async function init() {
 
   const bossTexture = textureLoader.load('/boss.png');
   bossTexture.colorSpace = THREE.SRGBColorSpace;
+
+  const peeTexture = textureLoader.load('/pee.png');
+  peeTexture.colorSpace = THREE.SRGBColorSpace;
+  peeTexture.magFilter = THREE.NearestFilter;
+  peeTexture.minFilter = THREE.NearestFilter;
+  const peePuddleMat = new THREE.MeshStandardMaterial({
+    map: peeTexture,
+    transparent: true,
+    opacity: 0,
+    roughness: 0.25,
+    metalness: 0.0,
+    depthWrite: false,
+  });
+  const peePuddleMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.75, 1.75),
+    peePuddleMat
+  );
+  peePuddleMesh.rotation.x = -Math.PI / 2;
+  peePuddleMesh.visible = false;
+  scene.add(peePuddleMesh);
 
   const bossGeo = new THREE.PlaneGeometry(BOSS_WIDTH, BOSS_HEIGHT);
   bossGeo.translate(0, BOSS_HEIGHT * 0.5, 0);
@@ -1251,6 +1339,8 @@ async function init() {
       leaveStepTimer: 0,
       leaveVx: 0,
       leaveVz: 0,
+      hadError: false,
+      maxTypedLen: 0,
     };
   });
 
@@ -1365,9 +1455,9 @@ async function init() {
         }
         if (isCurrentLetter && uTypePulse > 0.01) {
           vec2 jitter = vec2(
-            sin(uTime * 55.0 + vLocalU * 40.0),
-            cos(uTime * 65.0 + vLocalU * 35.0)
-          ) * (uTypePulse * 0.012) * vUvRect.zw;
+            sin(uTime * 62.0 + vLocalU * 40.0),
+            cos(uTime * 72.0 + vLocalU * 35.0)
+          ) * (uTypePulse * 0.022) * vUvRect.zw;
           vec2 cellMin = vUvRect.xy;
           vec2 cellMax = vUvRect.xy + vUvRect.zw;
           sampleUv = clamp(sampleUv + jitter, cellMin, cellMax);
@@ -1420,6 +1510,148 @@ async function init() {
   instancedLabels.frustumCulled = false;
   instancedLabels.renderOrder = 10;
   labelScene.add(instancedLabels);
+
+  const LABEL_WIDTH = 1.65;
+  const LABEL_HEIGHT = 0.42;
+  const xpPopupTexture = createFloatingTextTexture('+5 NP', {
+    fontSize: 34,
+    fillStyle: '#ffe066',
+    width: 160,
+    height: 64,
+  });
+  const perfectPopupTexture = createFloatingTextTexture('Perfect +25 NP', {
+    fontSize: 38,
+    fillStyle: '#7cffb2',
+    width: 320,
+    height: 80,
+  });
+
+  function createPopupPool(texture, count, baseScaleX, baseScaleY, renderOrder) {
+    return Array.from({ length: count }, () => {
+      const mat = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        opacity: 0,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.visible = false;
+      sprite.renderOrder = renderOrder;
+      labelScene.add(sprite);
+      return {
+        sprite,
+        mat,
+        active: false,
+        age: 0,
+        duration: 0.65,
+        startX: 0,
+        startY: 0,
+        startZ: 0,
+        rise: 0.36,
+        vx: 0,
+        baseScaleX,
+        baseScaleY,
+      };
+    });
+  }
+
+  const xpPopupPool = createPopupPool(xpPopupTexture, 24, 0.28, 0.112, 20);
+  const perfectPopupPool = createPopupPool(perfectPopupTexture, 6, 0.72, 0.18, 21);
+  const popupLocalOffset = new THREE.Vector3();
+
+  function acquirePopup(pool) {
+    let best = pool[0];
+    for (let i = 0; i < pool.length; i++) {
+      if (!pool[i].active) return pool[i];
+      if (pool[i].age > best.age) best = pool[i];
+    }
+    return best;
+  }
+
+  function spawnXpPopupForSlot(slot, charIndex) {
+    const { charCenterUV } = getCurrentFloorAtlas();
+    const centers = charCenterUV[slot.phraseIndex];
+    if (!centers || charIndex < 1 || charIndex * 2 + 1 >= centers.length) return;
+    const cu = centers[charIndex * 2 + 0];
+    const cv = centers[charIndex * 2 + 1];
+    const localX = (cu - 0.5) * LABEL_WIDTH;
+    const localY = (cv - 0.5) * LABEL_HEIGHT + 0.08;
+    popupLocalOffset.set(localX, localY, 0).applyQuaternion(camera.quaternion);
+
+    const p = acquirePopup(xpPopupPool);
+    p.active = true;
+    p.age = 0;
+    p.duration = 0.42;
+    p.startX = slot.x + popupLocalOffset.x;
+    p.startY = slot.labelY + popupLocalOffset.y;
+    p.startZ = slot.z + popupLocalOffset.z;
+    p.rise = 0.18;
+    p.vx = (Math.random() - 0.5) * 0.05;
+    p.mat.opacity = 1;
+    p.sprite.position.set(p.startX, p.startY, p.startZ);
+    p.sprite.scale.set(p.baseScaleX * 0.5, p.baseScaleY * 0.5, 1);
+    p.sprite.visible = true;
+  }
+
+  function spawnPerfectPopup(x, y, z) {
+    const p = acquirePopup(perfectPopupPool);
+    p.active = true;
+    p.age = 0;
+    p.duration = 0.68;
+    p.startX = x;
+    p.startY = y;
+    p.startZ = z;
+    p.rise = 0.24;
+    p.vx = 0;
+    p.mat.opacity = 1;
+    p.sprite.position.set(p.startX, p.startY, p.startZ);
+    p.sprite.scale.set(p.baseScaleX * 0.5, p.baseScaleY * 0.5, 1);
+    p.sprite.visible = true;
+  }
+
+  function updatePopupPool(pool, dt) {
+    for (let i = 0; i < pool.length; i++) {
+      const p = pool[i];
+      if (!p.active) continue;
+      p.age += dt;
+      if (p.age >= p.duration) {
+        p.active = false;
+        p.sprite.visible = false;
+        continue;
+      }
+      const t = p.age / p.duration;
+      let scaleMult = 1;
+      if (t < 0.16) {
+        scaleMult = 0.5 + 0.75 * Math.sin((t / 0.16) * Math.PI * 0.5);
+      } else if (t < 0.32) {
+        scaleMult = 1.25 - 0.25 * ((t - 0.16) / 0.16);
+      }
+      const riseEase = 1 - Math.pow(1 - t, 2.2);
+      const opacity = t < 0.2 ? 1 : Math.max(0, 1 - (t - 0.2) / 0.8);
+      p.sprite.position.set(
+        p.startX + p.vx * p.age,
+        p.startY + p.rise * riseEase,
+        p.startZ
+      );
+      p.sprite.scale.set(p.baseScaleX * scaleMult, p.baseScaleY * scaleMult, 1);
+      p.mat.opacity = opacity;
+    }
+  }
+
+  function updateFloatingPopups(dt) {
+    updatePopupPool(xpPopupPool, dt);
+    updatePopupPool(perfectPopupPool, dt);
+  }
+
+  function clearFloatingPopups() {
+    for (const pool of [xpPopupPool, perfectPopupPool]) {
+      for (let i = 0; i < pool.length; i++) {
+        pool[i].active = false;
+        pool[i].sprite.visible = false;
+      }
+    }
+  }
 
   const clearedCells = new Set();
   const usedVendingCells = new Set();
@@ -2264,8 +2496,15 @@ async function init() {
   const pottyLabel = document.getElementById('potty-label');
   const pottyTrack = document.getElementById('potty-track');
   const pottyFill = document.getElementById('potty-fill');
+  const xpLevelLabel = document.getElementById('xp-level');
+  const xpFill = document.getElementById('xp-fill');
+  const comboHud = document.getElementById('combo-hud');
+  const comboCountEl = document.getElementById('combo-count');
+  const wpmHud = document.getElementById('wpm-hud');
+  const wpmValueEl = document.getElementById('wpm-value');
   const vignette = document.getElementById('vignette');
   const fadeOverlay = document.getElementById('fade-overlay');
+  const soiledPantsEl = document.getElementById('soiled-pants');
   const eventLogEl = document.getElementById('event-log');
   const MAX_LOG_ENTRIES = 5;
 
@@ -2351,6 +2590,7 @@ async function init() {
     if (isDead || devState.god) return;
     isDead = true;
     deathTime = performance.now();
+    updateWpmHud(true);
     anxietyHud.style.transform = '';
     const startSub = startDeathTyping(message, 65, 24);
     startSub(DEATH_SUB_TEXT);
@@ -2387,6 +2627,75 @@ async function init() {
     pottyFill.style.setProperty('--bar-color', color);
     pottyTrack.style.borderColor = color;
     pottyLabel.style.color = color;
+  }
+
+  let playerXp = 0;
+  let playerLevel = 1;
+  let perfectStreak = 0;
+  let comboPopTimer = null;
+  let encounterStartTime = 0;
+  let encounterCorrectChars = 0;
+  let lastWpmUpdateTime = 0;
+
+  function updateWpmHud(force = false) {
+    if (!wpmValueEl) return;
+    if (!inEncounter || isDead) {
+      return;
+    }
+    const now = performance.now();
+    if (!force && now - lastWpmUpdateTime < 150) return;
+    lastWpmUpdateTime = now;
+    if (encounterCorrectChars <= 0) {
+      wpmValueEl.textContent = '0';
+      return;
+    }
+    const elapsedMinutes = Math.max((now - encounterStartTime) / 60000, 1 / 60);
+    const wpm = Math.round((encounterCorrectChars / 5) / elapsedMinutes);
+    wpmValueEl.textContent = String(wpm);
+  }
+
+  function updateComboHud(pop = false) {
+    if (!comboHud || !comboCountEl) return;
+    comboCountEl.textContent = `x${perfectStreak}`;
+    if (pop && perfectStreak > 0) {
+      comboHud.classList.add('pop');
+      if (comboPopTimer) clearTimeout(comboPopTimer);
+      comboPopTimer = setTimeout(() => {
+        comboHud.classList.remove('pop');
+      }, 130);
+    } else {
+      comboHud.classList.remove('pop');
+    }
+  }
+
+  function getXpToNextLevel(level) {
+    return 100 + (level - 1) * 50;
+  }
+
+  function updateXpMeter() {
+    const needed = getXpToNextLevel(playerLevel);
+    const pct = Math.min(100, (playerXp / needed) * 100);
+    if (xpLevelLabel) {
+      xpLevelLabel.textContent = `NETWORK LVL ${playerLevel}`;
+    }
+    if (xpFill) {
+      xpFill.style.width = `${pct.toFixed(2)}%`;
+    }
+  }
+
+  function addXp(amount) {
+    if (isDead || amount <= 0) return;
+    playerXp += amount;
+    let leveledUp = false;
+    while (playerXp >= getXpToNextLevel(playerLevel)) {
+      playerXp -= getXpToNextLevel(playerLevel);
+      playerLevel++;
+      leveledUp = true;
+    }
+    updateXpMeter();
+    if (leveledUp) {
+      addLog(`Reached Network Level ${playerLevel}!`, '#ffe066');
+    }
   }
 
   function addAnxiety(amount) {
@@ -2452,6 +2761,10 @@ async function init() {
 
   function startEncounter(mx, mz) {
     inEncounter = true;
+    encounterStartTime = performance.now();
+    encounterCorrectChars = 0;
+    lastWpmUpdateTime = 0;
+    updateWpmHud(true);
     encounterCellKey = `${mx},${mz}`;
     clearedCells.add(encounterCellKey);
     const man = getIdleManAt(mx, mz);
@@ -2501,6 +2814,8 @@ async function init() {
       const offset = (i - (count - 1) * 0.5) * spacing;
       slot.alive = true;
       slot.leaving = false;
+      slot.hadError = false;
+      slot.maxTypedLen = 0;
       slot.laughTimer = 0;
       slot.reveal = 0;
       revealArray[i] = 0;
@@ -2578,6 +2893,11 @@ async function init() {
         const dist = Math.hypot(dx, dz) || 1;
         slot.leaveVx = (dx / dist) * 2.2;
         slot.leaveVz = (dz / dist) * 2.2;
+        if (!slot.hadError) {
+          spawnPerfectPopup(slot.x, slot.labelY + 0.18, slot.z);
+          playPerfectSound();
+          addXp(25);
+        }
         matched = true;
       } else {
         remaining++;
@@ -2588,6 +2908,7 @@ async function init() {
       if (remaining === 0) {
         inEncounter = false;
         inputBuffer = '';
+        updateWpmHud(true);
         addLog('Escaped the conversation.', '#9be564');
       } else {
         arrangeEncounterSlots(false);
@@ -2645,6 +2966,47 @@ async function init() {
     stopX: 0,
     stopZ: 0,
   };
+
+  let cameraPitch = 0;
+  const bladderAccident = {
+    active: false,
+    timer: 0,
+    duration: 3.0,
+    promptShown: false,
+    canRestart: false,
+    startSubTyping: null,
+  };
+
+  function triggerBladderAccident() {
+    if (bladderAccident.active || bossCatch.active || isDead || devState.god) return;
+    bladderAccident.active = true;
+    bladderAccident.timer = 0;
+    bladderAccident.promptShown = false;
+    bladderAccident.canRestart = false;
+    bladderAccident.startSubTyping = null;
+
+    playPeeingSound();
+    const forwardX = -Math.sin(player.yaw);
+    const forwardZ = -Math.cos(player.yaw);
+    peePuddleMesh.position.set(
+      player.x + forwardX * 0.45,
+      0.02,
+      player.z + forwardZ * 0.45
+    );
+    peePuddleMesh.rotation.z = player.yaw;
+    peePuddleMat.opacity = 0;
+    peePuddleMesh.visible = true;
+
+    if (soiledPantsEl) {
+      soiledPantsEl.style.display = 'block';
+      soiledPantsEl.style.opacity = '0';
+      requestAnimationFrame(() => {
+        if (bladderAccident.active || isDead) {
+          soiledPantsEl.style.opacity = '1';
+        }
+      });
+    }
+  }
 
   function findBossSpawnCell(originGx, originGz, minDist = 6, maxDist = 9) {
     const visited = new Set([`${originGx},${originGz}`]);
@@ -2801,6 +3163,18 @@ async function init() {
     bossCatch.promptShown = false;
     bossCatch.canRestart = false;
     bossCatch.startSubTyping = null;
+    bladderAccident.active = false;
+    bladderAccident.timer = 0;
+    bladderAccident.promptShown = false;
+    bladderAccident.canRestart = false;
+    bladderAccident.startSubTyping = null;
+    cameraPitch = 0;
+    peePuddleMesh.visible = false;
+    peePuddleMat.opacity = 0;
+    if (soiledPantsEl) {
+      soiledPantsEl.style.display = 'none';
+      soiledPantsEl.style.opacity = '0';
+    }
     clearDeathTyping();
     bossMesh.position.set(boss.x, 0, boss.z);
     bossLight.position.set(boss.x, 1.45, boss.z);
@@ -2896,13 +3270,14 @@ async function init() {
 
     lastWallCellX = Infinity;
     lastWallCellZ = Infinity;
+    clearFloatingPopups();
     updateTypedHighlights();
     spawnBoss();
     addLog(`Took the elevator up to Floor ${floorLevel}.`, '#90caf9');
   }
 
   function triggerElevatorTransition() {
-    if (elevatorTransition.active || isDead || bossCatch.active) return;
+    if (elevatorTransition.active || isDead || bossCatch.active || bladderAccident.active) return;
     elevatorTransition.active = true;
     playElevatorOpenSound();
     if (fadeOverlay) {
@@ -2933,6 +3308,9 @@ async function init() {
     inEncounter = false;
     anxiety = 0;
     potty = 0;
+    playerXp = 0;
+    playerLevel = 1;
+    perfectStreak = 0;
     pottyVendingTimer = 0;
     typePulse = 0;
     typoPulse = 0;
@@ -2970,9 +3348,15 @@ async function init() {
 
     lastWallCellX = Infinity;
     lastWallCellZ = Infinity;
+    clearFloatingPopups();
     updateTypedHighlights();
     updateAnxietyMeter();
     updatePottyMeter();
+    updateXpMeter();
+    updateComboHud(false);
+    if (wpmValueEl) {
+      wpmValueEl.textContent = '0';
+    }
     vignette.style.opacity = '0';
     anxietyHud.style.transform = '';
     deathScreen.style.display = 'none';
@@ -3217,6 +3601,13 @@ async function init() {
       return;
     }
 
+    if (bladderAccident.active) {
+      if (!e.repeat && bladderAccident.canRestart) {
+        resetGame();
+      }
+      return;
+    }
+
     if (elevatorTransition.active) {
       return;
     }
@@ -3255,7 +3646,7 @@ async function init() {
               vendingShake.gx = player.gx;
               vendingShake.gz = player.gz;
               vendingShake.t = 0;
-              addLog('Grabbed a cold drink. (-40 Anxiety, +Potty)', '#80deea');
+              addLog('Grabbed a cold drink. (-40 Anxiety, +Bladder)', '#80deea');
             } else {
               addLog('The vending machine is out of stock.', '#90a4ae');
             }
@@ -3391,6 +3782,26 @@ async function init() {
       if (matched) {
         inputBuffer = candidate;
         typePulse = 1.0;
+        let gainedNewLetterXp = false;
+        for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
+          const slot = encounterSlots[i];
+          if (
+            slot.alive &&
+            slot.phrase.startsWith(inputBuffer) &&
+            inputBuffer.length > slot.maxTypedLen
+          ) {
+            slot.maxTypedLen = inputBuffer.length;
+            spawnXpPopupForSlot(slot, inputBuffer.length);
+            gainedNewLetterXp = true;
+          }
+        }
+        if (gainedNewLetterXp) {
+          encounterCorrectChars++;
+          perfectStreak++;
+          updateComboHud(true);
+          addXp(5);
+          updateWpmHud(true);
+        }
         if (checkAndClearEncounterMatch(inputBuffer)) {
           inputBuffer = '';
         }
@@ -3399,12 +3810,16 @@ async function init() {
         typoPulse = 1.0;
         for (let i = 0; i < MAX_ENCOUNTER_MEN; i++) {
           const slot = encounterSlots[i];
-          typoMaskArray[i] =
-            slot.alive && (inputBuffer.length === 0 || slot.phrase.startsWith(inputBuffer))
-              ? 1
-              : 0;
+          const isCandidate =
+            slot.alive && (inputBuffer.length === 0 || slot.phrase.startsWith(inputBuffer));
+          typoMaskArray[i] = isCandidate ? 1 : 0;
+          if (isCandidate) {
+            slot.hadError = true;
+          }
         }
         typoMaskAttr.needsUpdate = true;
+        perfectStreak = 0;
+        updateComboHud(false);
         addAnxiety(getFloorTypoPenalty());
       }
       triggerRandomManLaugh();
@@ -3415,7 +3830,8 @@ async function init() {
     ensureAudio();
     if (
       (isDead && performance.now() - deathTime > 300) ||
-      (bossCatch.active && bossCatch.canRestart)
+      (bossCatch.active && bossCatch.canRestart) ||
+      (bladderAccident.active && bladderAccident.canRestart)
     ) {
       resetGame();
     }
@@ -3542,15 +3958,17 @@ async function init() {
       return;
     }
 
-    typePulse *= Math.exp(-16 * dt);
+    typePulse *= Math.exp(-12 * dt);
     if (typePulse < 0.005) typePulse = 0;
     typoPulse *= Math.exp(-12 * dt);
     if (typoPulse < 0.005) typoPulse = 0;
     labelMat.uniforms.uTime.value = elapsed;
     labelMat.uniforms.uTypePulse.value = typePulse;
     labelMat.uniforms.uTypoPulse.value = typoPulse;
+    updateFloatingPopups(dt);
+    updateWpmHud();
 
-    if (!bossCatch.active && !isDead && !elevatorTransition.active && !devState.god) {
+    if (!bossCatch.active && !bladderAccident.active && !isDead && !elevatorTransition.active && !devState.god) {
       let pottyRate = POTTY_FILL_RATE;
       if (pottyVendingTimer > 0) {
         pottyVendingTimer = Math.max(0, pottyVendingTimer - dt);
@@ -3559,8 +3977,42 @@ async function init() {
       potty = Math.min(100, potty + pottyRate * dt);
       updatePottyMeter();
       if (potty >= 100) {
+        triggerBladderAccident();
+      }
+    }
+
+    if (bladderAccident.active) {
+      bladderAccident.timer += dt;
+      const pitchLerp = 1 - Math.exp(-5.5 * dt);
+      cameraPitch += (-1.02 - cameraPitch) * pitchLerp;
+      const puddleFade = Math.min(1, Math.max(0, (bladderAccident.timer - 0.15) / 1.35));
+      peePuddleMat.opacity = puddleFade * 0.95;
+
+      if (!bladderAccident.promptShown && bladderAccident.timer >= 1.55) {
+        bladderAccident.promptShown = true;
         playPanicAttackSound();
-        triggerDeath('You had a panic attack...');
+        bladderAccident.startSubTyping = startDeathTyping('You had an accident.', 65, 24);
+        deathScreen.style.backgroundColor = 'rgba(0, 0, 0, 0)';
+        deathScreen.style.display = 'flex';
+        requestAnimationFrame(() => {
+          if (bladderAccident.active || isDead) {
+            deathScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.92)';
+          }
+        });
+      }
+
+      if (!bladderAccident.canRestart && bladderAccident.timer >= 2.6) {
+        bladderAccident.canRestart = true;
+        if (bladderAccident.startSubTyping) {
+          bladderAccident.startSubTyping();
+        }
+      }
+
+      if (bladderAccident.timer >= bladderAccident.duration) {
+        bladderAccident.active = false;
+        isDead = true;
+        deathTime = performance.now();
+        anxietyHud.style.transform = '';
       }
     }
 
@@ -3744,6 +4196,7 @@ async function init() {
       EYE_HEIGHT + rumbleY,
       player.z + nudgeZ + rumbleZ
     );
+    camera.rotation.x = cameraPitch;
     camera.rotation.y = player.yaw;
     camera.rotation.z = shakeAmp > 0 ? (Math.random() * 2 - 1) * shakeAmp * 0.25 : 0;
 
